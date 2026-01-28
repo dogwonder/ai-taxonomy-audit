@@ -1,0 +1,342 @@
+<?php
+/**
+ * CSV Handler
+ *
+ * @package DGWTaxonomyAudit\Output
+ */
+
+declare(strict_types=1);
+
+namespace DGWTaxonomyAudit\Output;
+
+/**
+ * Handles CSV export and import of classification suggestions.
+ */
+class CSVHandler {
+
+	/**
+	 * CSV headers.
+	 *
+	 * @var array<string>
+	 */
+	private const HEADERS = [
+		'post_id',
+		'post_title',
+		'post_url',
+		'taxonomy',
+		'suggested_term',
+		'confidence',
+		'reason',
+		'approved',
+	];
+
+	/**
+	 * Export classification results to CSV.
+	 *
+	 * @param array<array{post_id: int, post_title: string, classifications: array}> $results Classification results.
+	 * @param string|null                                                            $file    Output file path.
+	 *
+	 * @return string File path or CSV content.
+	 */
+	public function export( array $results, ?string $file = null ): string {
+		$rows = $this->flattenResults( $results );
+
+		if ( $file ) {
+			$this->writeToFile( $file, $rows );
+			return $file;
+		}
+
+		return $this->toString( $rows );
+	}
+
+	/**
+	 * Flatten classification results to CSV rows.
+	 *
+	 * @param array<array{post_id: int, post_title: string, classifications: array}> $results Results.
+	 *
+	 * @return array<array<string>>
+	 */
+	private function flattenResults( array $results ): array {
+		$rows = [];
+
+		foreach ( $results as $result ) {
+			if ( empty( $result['classifications'] ) ) {
+				continue;
+			}
+
+			foreach ( $result['classifications'] as $taxonomy => $terms ) {
+				foreach ( $terms as $term ) {
+					$rows[] = [
+						'post_id'        => (string) $result['post_id'],
+						'post_title'     => $result['post_title'],
+						'post_url'       => $result['post_url'] ?? '',
+						'taxonomy'       => $taxonomy,
+						'suggested_term' => $term['term'],
+						'confidence'     => (string) round( $term['confidence'], 2 ),
+						'reason'         => $term['reason'] ?? '',
+						'approved'       => '',
+					];
+				}
+			}
+		}
+
+		return $rows;
+	}
+
+	/**
+	 * Write rows to CSV file.
+	 *
+	 * @param string              $file File path.
+	 * @param array<array<string>> $rows Data rows.
+	 *
+	 * @return void
+	 */
+	private function writeToFile( string $file, array $rows ): void {
+		$handle = fopen( $file, 'w' );
+
+		if ( ! $handle ) {
+			throw new \RuntimeException( "Cannot open file for writing: {$file}" );
+		}
+
+		// Write BOM for Excel compatibility.
+		fwrite( $handle, "\xEF\xBB\xBF" );
+
+		// Write headers.
+		fputcsv( $handle, self::HEADERS );
+
+		// Write data rows.
+		foreach ( $rows as $row ) {
+			fputcsv( $handle, array_values( $row ) );
+		}
+
+		fclose( $handle );
+	}
+
+	/**
+	 * Convert rows to CSV string.
+	 *
+	 * @param array<array<string>> $rows Data rows.
+	 *
+	 * @return string CSV content.
+	 */
+	private function toString( array $rows ): string {
+		$output = fopen( 'php://memory', 'r+' );
+
+		fputcsv( $output, self::HEADERS );
+
+		foreach ( $rows as $row ) {
+			fputcsv( $output, array_values( $row ) );
+		}
+
+		rewind( $output );
+		$csv = stream_get_contents( $output );
+		fclose( $output );
+
+		return $csv;
+	}
+
+	/**
+	 * Import suggestions from CSV file.
+	 *
+	 * @param string $file          File path.
+	 * @param bool   $approved_only Only return approved rows.
+	 *
+	 * @return array<array{post_id: int, taxonomy: string, term: string, confidence: float, reason: string}>
+	 */
+	public function import( string $file, bool $approved_only = false ): array {
+		if ( ! file_exists( $file ) ) {
+			throw new \RuntimeException( "File not found: {$file}" );
+		}
+
+		$handle = fopen( $file, 'r' );
+
+		if ( ! $handle ) {
+			throw new \RuntimeException( "Cannot open file: {$file}" );
+		}
+
+		// Skip BOM if present.
+		$bom = fread( $handle, 3 );
+		if ( $bom !== "\xEF\xBB\xBF" ) {
+			rewind( $handle );
+		}
+
+		// Read headers.
+		$headers = fgetcsv( $handle );
+
+		if ( ! $headers ) {
+			fclose( $handle );
+			throw new \RuntimeException( 'Invalid CSV: no headers found' );
+		}
+
+		// Normalize headers.
+		$headers = array_map( 'trim', $headers );
+		$headers = array_map( 'strtolower', $headers );
+
+		$suggestions = [];
+
+		while ( ( $row = fgetcsv( $handle ) ) !== false ) {
+			$data = array_combine( $headers, $row );
+
+			if ( ! $data ) {
+				continue;
+			}
+
+			// Skip unapproved if filtering.
+			if ( $approved_only ) {
+				$approved = strtolower( trim( $data['approved'] ?? '' ) );
+				if ( ! in_array( $approved, [ 'true', 'yes', '1', 'x' ], true ) ) {
+					continue;
+				}
+			}
+
+			$suggestions[] = [
+				'post_id'    => (int) $data['post_id'],
+				'post_title' => $data['post_title'] ?? '',
+				'taxonomy'   => $data['taxonomy'],
+				'term'       => $data['suggested_term'],
+				'confidence' => (float) $data['confidence'],
+				'reason'     => $data['reason'] ?? '',
+			];
+		}
+
+		fclose( $handle );
+
+		return $suggestions;
+	}
+
+	/**
+	 * Group imported suggestions by post ID.
+	 *
+	 * @param array<array{post_id: int, taxonomy: string, term: string}> $suggestions Flat suggestions.
+	 *
+	 * @return array<int, array{post_id: int, post_title: string, taxonomies: array<string, array<string>>>>
+	 */
+	public function groupByPost( array $suggestions ): array {
+		$grouped = [];
+
+		foreach ( $suggestions as $suggestion ) {
+			$post_id = $suggestion['post_id'];
+
+			if ( ! isset( $grouped[ $post_id ] ) ) {
+				$grouped[ $post_id ] = [
+					'post_id'    => $post_id,
+					'post_title' => $suggestion['post_title'],
+					'taxonomies' => [],
+				];
+			}
+
+			$taxonomy = $suggestion['taxonomy'];
+
+			if ( ! isset( $grouped[ $post_id ]['taxonomies'][ $taxonomy ] ) ) {
+				$grouped[ $post_id ]['taxonomies'][ $taxonomy ] = [];
+			}
+
+			$grouped[ $post_id ]['taxonomies'][ $taxonomy ][] = $suggestion['term'];
+		}
+
+		return $grouped;
+	}
+
+	/**
+	 * Validate CSV structure.
+	 *
+	 * @param string $file File path.
+	 *
+	 * @return array{valid: bool, errors: array<string>, row_count: int}
+	 */
+	public function validate( string $file ): array {
+		$errors = [];
+		$row_count = 0;
+
+		if ( ! file_exists( $file ) ) {
+			return [
+				'valid'     => false,
+				'errors'    => [ 'File not found' ],
+				'row_count' => 0,
+			];
+		}
+
+		$handle = fopen( $file, 'r' );
+
+		if ( ! $handle ) {
+			return [
+				'valid'     => false,
+				'errors'    => [ 'Cannot open file' ],
+				'row_count' => 0,
+			];
+		}
+
+		// Skip BOM.
+		$bom = fread( $handle, 3 );
+		if ( $bom !== "\xEF\xBB\xBF" ) {
+			rewind( $handle );
+		}
+
+		$headers = fgetcsv( $handle );
+
+		if ( ! $headers ) {
+			fclose( $handle );
+			return [
+				'valid'     => false,
+				'errors'    => [ 'No headers found' ],
+				'row_count' => 0,
+			];
+		}
+
+		$headers = array_map( fn( $h ) => strtolower( trim( $h ) ), $headers );
+
+		// Check required columns.
+		$required = [ 'post_id', 'taxonomy', 'suggested_term' ];
+		$missing = array_diff( $required, $headers );
+
+		if ( ! empty( $missing ) ) {
+			$errors[] = 'Missing required columns: ' . implode( ', ', $missing );
+		}
+
+		// Count and validate rows.
+		$line_num = 1;
+		while ( ( $row = fgetcsv( $handle ) ) !== false ) {
+			$line_num++;
+
+			if ( count( $row ) !== count( $headers ) ) {
+				$errors[] = "Row {$line_num}: column count mismatch";
+				continue;
+			}
+
+			$data = array_combine( $headers, $row );
+
+			if ( empty( $data['post_id'] ) || ! is_numeric( $data['post_id'] ) ) {
+				$errors[] = "Row {$line_num}: invalid post_id";
+			}
+
+			if ( empty( $data['taxonomy'] ) ) {
+				$errors[] = "Row {$line_num}: missing taxonomy";
+			}
+
+			if ( empty( $data['suggested_term'] ) ) {
+				$errors[] = "Row {$line_num}: missing suggested_term";
+			}
+
+			$row_count++;
+		}
+
+		fclose( $handle );
+
+		return [
+			'valid'     => empty( $errors ),
+			'errors'    => $errors,
+			'row_count' => $row_count,
+		];
+	}
+
+	/**
+	 * Generate output filename.
+	 *
+	 * @param string $prefix File prefix.
+	 *
+	 * @return string Filename.
+	 */
+	public function generateFilename( string $prefix = 'suggestions' ): string {
+		return sprintf( '%s-%s.csv', $prefix, gmdate( 'Y-m-d-His' ) );
+	}
+}

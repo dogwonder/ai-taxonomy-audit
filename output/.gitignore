@@ -1,0 +1,7 @@
+# Ignore generated output files
+*.csv
+*.json
+*.sh
+
+# Keep this directory
+!.gitignore

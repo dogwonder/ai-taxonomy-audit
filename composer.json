@@ -1,0 +1,28 @@
+{
+    "name": "dgwltd/ai-taxonomy-audit",
+    "description": "WP-CLI tool for human-in-the-loop taxonomy enrichment using local LLM (Ollama)",
+    "type": "wordpress-plugin",
+    "license": "GPL-2.0-or-later",
+    "authors": [
+        {
+            "name": "DGW Ltd",
+            "email": "hello@dgw.ltd"
+        }
+    ],
+    "require": {
+        "php": ">=8.0",
+        "guzzlehttp/guzzle": "^7.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "DGWTaxonomyAudit\\": "src/"
+        }
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true
+    }
+}
