@@ -161,12 +161,16 @@ class Commands {
 		}
 
 		if ( ! $dry_run && ! $client->isAvailable() ) {
-			if ( 'openai' === $provider ) {
-				WP_CLI::error( 'OpenAI API is not available. Check your API key (OPENAI_API_KEY constant).' );
-			} else {
-				WP_CLI::error( 'Ollama is not available. Is it running?' );
-			}
+			$error_messages = [
+				'openai'     => 'OpenAI API is not available. Check your API key (OPENAI_API_KEY constant).',
+				'openrouter' => 'OpenRouter API is not available. Check your API key (OPENROUTER_API_KEY constant).',
+				'ollama'     => 'Ollama is not available. Is it running?',
+			];
+			WP_CLI::error( $error_messages[ $provider ] ?? 'Provider not available.' );
 		}
+
+		// Handle single-step flag.
+		$single_step = isset( $assoc_args['single-step'] );
 
 		// Get posts to process.
 		if ( ! empty( $assoc_args['post-ids'] ) ) {
@@ -204,6 +208,7 @@ class Commands {
 		// Create classifier.
 		$classifier = new Classifier( $client, $extractor );
 		$classifier->setMinConfidence( $min_confidence );
+		$classifier->setTwoStep( ! $single_step );
 
 		// Create progress bar.
 		$progress = \WP_CLI\Utils\make_progress_bar( 'Classifying posts', count( $post_ids ) );
@@ -469,6 +474,31 @@ class Commands {
 		} else {
 			WP_CLI::log( WP_CLI::colorize( '%YStatus: Not configured%n' ) );
 			WP_CLI::log( 'Add to wp-config.php: define( \'OPENAI_API_KEY\', \'sk-...\' );' );
+		}
+
+		WP_CLI::log( '' );
+
+		// Check OpenRouter.
+		WP_CLI::log( '--- OpenRouter (Multi-Model API) ---' );
+		if ( defined( 'OPENROUTER_API_KEY' ) && ! empty( OPENROUTER_API_KEY ) ) {
+			try {
+				$openrouter = new OpenRouterClient();
+				if ( $openrouter->isAvailable() ) {
+					WP_CLI::log( WP_CLI::colorize( '%GStatus: Connected%n' ) );
+					WP_CLI::log( sprintf( 'Default model: %s', $config['openrouter']['model'] ?? 'google/gemma-2-9b-it:free' ) );
+					$models = $openrouter->getModels();
+					if ( ! empty( $models ) ) {
+						WP_CLI::log( sprintf( 'Recommended models: %s', implode( ', ', array_slice( $models, 0, 3 ) ) ) );
+					}
+				} else {
+					WP_CLI::log( WP_CLI::colorize( '%RStatus: API key invalid%n' ) );
+				}
+			} catch ( \Exception $e ) {
+				WP_CLI::log( WP_CLI::colorize( '%RStatus: Error - ' . $e->getMessage() . '%n' ) );
+			}
+		} else {
+			WP_CLI::log( WP_CLI::colorize( '%YStatus: Not configured%n' ) );
+			WP_CLI::log( 'Add to wp-config.php: define( \'OPENROUTER_API_KEY\', \'sk-or-...\' );' );
 		}
 
 		WP_CLI::log( '' );
@@ -862,7 +892,7 @@ class Commands {
 	/**
 	 * Create LLM client based on provider.
 	 *
-	 * @param string      $provider Provider name (ollama or openai).
+	 * @param string      $provider Provider name (ollama, openai, or openrouter).
 	 * @param string|null $model    Model name override.
 	 *
 	 * @return LLMClientInterface
@@ -875,6 +905,9 @@ class Commands {
 		switch ( $provider ) {
 			case 'openai':
 				return new OpenAIClient( $config );
+
+			case 'openrouter':
+				return new OpenRouterClient( $config );
 
 			case 'ollama':
 			default:

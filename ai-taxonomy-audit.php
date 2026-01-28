@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AI Taxonomy Audit
  * Plugin URI: https://dgw.ltd
- * Description: WP-CLI tool for human-in-the-loop taxonomy enrichment using LLM (Ollama or OpenAI).
+ * Description: WP-CLI tool for human-in-the-loop taxonomy enrichment using LLM (Ollama, OpenAI, or OpenRouter).
  * Version: 1.0.0
  * Author: DGW Ltd
  * Author URI: https://dgw.ltd
@@ -54,12 +54,17 @@ function get_config(): array {
 		$config = [
 			'ollama' => [
 				'base_uri'    => defined( 'DGW_OLLAMA_BASE_URI' ) ? DGW_OLLAMA_BASE_URI : 'http://localhost:11434',
-				'model'       => defined( 'DGW_OLLAMA_MODEL' ) ? DGW_OLLAMA_MODEL : 'gemma3:27b',
+				'model'       => defined( 'DGW_OLLAMA_MODEL' ) ? DGW_OLLAMA_MODEL : 'qwen2.5:latest',
 				'temperature' => 0.3,
 				'timeout'     => 120,
 			],
 			'openai' => [
 				'model'       => defined( 'DGW_OPENAI_MODEL' ) ? DGW_OPENAI_MODEL : 'gpt-4o-mini',
+				'temperature' => 0.3,
+				'timeout'     => 120,
+			],
+			'openrouter' => [
+				'model'       => defined( 'DGW_OPENROUTER_MODEL' ) ? DGW_OPENROUTER_MODEL : 'google/gemma-2-9b-it:free',
 				'temperature' => 0.3,
 				'timeout'     => 120,
 			],

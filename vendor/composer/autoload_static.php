@@ -78,6 +78,7 @@ class ComposerStaticInitc425db3f8e8f637b6ef77b0388f97f67
         'DGWTaxonomyAudit\\Core\\LLMClientInterface' => __DIR__ . '/../..' . '/src/Core/LLMClientInterface.php',
         'DGWTaxonomyAudit\\Core\\OllamaClient' => __DIR__ . '/../..' . '/src/Core/OllamaClient.php',
         'DGWTaxonomyAudit\\Core\\OpenAIClient' => __DIR__ . '/../..' . '/src/Core/OpenAIClient.php',
+        'DGWTaxonomyAudit\\Core\\OpenRouterClient' => __DIR__ . '/../..' . '/src/Core/OpenRouterClient.php',
         'DGWTaxonomyAudit\\Core\\TaxonomyExtractor' => __DIR__ . '/../..' . '/src/Core/TaxonomyExtractor.php',
         'DGWTaxonomyAudit\\Output\\CSVHandler' => __DIR__ . '/../..' . '/src/Output/CSVHandler.php',
         'DGWTaxonomyAudit\\Output\\ScriptGenerator' => __DIR__ . '/../..' . '/src/Output/ScriptGenerator.php',

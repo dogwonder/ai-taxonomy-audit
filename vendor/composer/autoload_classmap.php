@@ -13,6 +13,7 @@ return array(
     'DGWTaxonomyAudit\\Core\\LLMClientInterface' => $baseDir . '/src/Core/LLMClientInterface.php',
     'DGWTaxonomyAudit\\Core\\OllamaClient' => $baseDir . '/src/Core/OllamaClient.php',
     'DGWTaxonomyAudit\\Core\\OpenAIClient' => $baseDir . '/src/Core/OpenAIClient.php',
+    'DGWTaxonomyAudit\\Core\\OpenRouterClient' => $baseDir . '/src/Core/OpenRouterClient.php',
     'DGWTaxonomyAudit\\Core\\TaxonomyExtractor' => $baseDir . '/src/Core/TaxonomyExtractor.php',
     'DGWTaxonomyAudit\\Output\\CSVHandler' => $baseDir . '/src/Output/CSVHandler.php',
     'DGWTaxonomyAudit\\Output\\ScriptGenerator' => $baseDir . '/src/Output/ScriptGenerator.php',

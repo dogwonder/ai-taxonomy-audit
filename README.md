@@ -1,8 +1,16 @@
 # AI Taxonomy Audit
 
-WP-CLI tool for human-in-the-loop taxonomy enrichment using LLM (Ollama or OpenAI).
+WP-CLI tool for human-in-the-loop taxonomy enrichment using LLM (Ollama, OpenAI, or OpenRouter).
 
 Classifies WordPress posts against controlled vocabularies and generates WP-CLI commands for applying suggested terms. All suggestions require human review before application.
+
+## Features
+
+- **Three provider options**: Ollama (local), OpenAI, or OpenRouter (access to 100+ models)
+- **Two-step classification**: Context-aware conversation for higher accuracy
+- **Retry logic**: Automatically corrects invalid term suggestions
+- **Confidence scoring**: Filter results by confidence threshold
+- **CSV workflow**: Export, review in spreadsheets, then apply approved changes
 
 ## Requirements
 
@@ -12,6 +20,7 @@ Classifies WordPress posts against controlled vocabularies and generates WP-CLI 
 - One of:
   - **Ollama** (local, free, private) — [ollama.ai](https://ollama.ai)
   - **OpenAI API key** (cloud, paid, higher quality)
+  - **OpenRouter API key** (access to many models) — [openrouter.ai](https://openrouter.ai)
 
 ## Installation
 
@@ -27,9 +36,13 @@ Add to `wp-config.php`:
 // For OpenAI (required if using --provider=openai)
 define( 'OPENAI_API_KEY', 'sk-...' );
 
+// For OpenRouter (required if using --provider=openrouter)
+define( 'OPENROUTER_API_KEY', 'sk-or-...' );
+
 // Optional: Override default models
-define( 'DGW_OPENAI_MODEL', 'gpt-4o-mini' );    // Default: gpt-4o-mini
-define( 'DGW_OLLAMA_MODEL', 'gemma3:27b' );     // Default: gemma3:27b
+define( 'DGW_OPENAI_MODEL', 'gpt-4o-mini' );              // Default: gpt-4o-mini
+define( 'DGW_OLLAMA_MODEL', 'qwen2.5:latest' );               // Default: qwen2.5:latest
+define( 'DGW_OPENROUTER_MODEL', 'google/gemma-2-9b-it:free' ); // Default: gemma-2-9b-it:free
 
 // Optional: Ollama server location
 define( 'DGW_OLLAMA_BASE_URI', 'http://localhost:11434' );
@@ -46,6 +59,10 @@ wp taxonomy-audit classify --provider=openai --limit=10
 
 # Classify using local Ollama
 wp taxonomy-audit classify --provider=ollama --limit=10
+
+# Classify using OpenRouter (access to many models)
+wp taxonomy-audit classify --provider=openrouter --model=deepseek/deepseek-chat --limit=10
+wp taxonomy-audit classify --provider=ollama --model=gemma3:27b --limit=5 --format=csv
 
 # Review the generated CSV, then apply approved suggestions
 wp taxonomy-audit apply --file=output/suggestions-2024-01-28-120000.csv --approved-only
@@ -69,11 +86,12 @@ wp taxonomy-audit classify [options]
 | `--post-ids=<ids>` | — | Comma-separated post IDs |
 | `--limit=<n>` | `10` | Maximum posts to process |
 | `--taxonomies=<list>` | `category,post_tag` | Taxonomies to classify against |
-| `--provider=<name>` | `ollama` | LLM provider: `ollama` or `openai` |
+| `--provider=<name>` | `ollama` | LLM provider: `ollama`, `openai`, or `openrouter` |
 | `--model=<name>` | varies | Model to use |
 | `--format=<fmt>` | `csv` | Output: `csv`, `json`, or `terminal` |
 | `--prefix=<cmd>` | `ddev wp` | WP-CLI prefix for generated commands |
 | `--min-confidence=<n>` | `0.7` | Minimum confidence threshold (0-1) |
+| `--single-step` | — | Use single API call instead of two-step conversation |
 | `--dry-run` | — | Preview without calling LLM |
 | `--unclassified-only` | — | Only process posts without terms |
 
@@ -82,6 +100,12 @@ wp taxonomy-audit classify [options]
 ```bash
 # Classify with OpenAI (better results)
 wp taxonomy-audit classify --provider=openai --model=gpt-4o-mini --limit=20
+
+# Classify with OpenRouter (access to DeepSeek, Llama, Mistral, etc.)
+wp taxonomy-audit classify --provider=openrouter --model=deepseek/deepseek-chat --limit=20
+
+# Use single-step mode (faster, less accurate)
+wp taxonomy-audit classify --provider=openai --single-step --limit=10
 
 # Classify specific posts
 wp taxonomy-audit classify --post-ids=123,456,789
@@ -265,6 +289,26 @@ wp taxonomy-audit apply --file=output/suggestions.csv --approved-only
 wp taxonomy-audit generate-script --file=output/suggestions.csv --approved-only --output=apply.sh
 ```
 
+## How Classification Works
+
+The plugin uses a sophisticated two-step classification process:
+
+### Step 1: Context Analysis
+The LLM first reads the post content and provides a brief analysis of the main topics and themes. This establishes context without prematurely making term selections.
+
+### Step 2: Term Selection
+With the context established, the LLM then receives the controlled vocabulary and selects appropriate terms, providing confidence scores and reasoning for each selection.
+
+### Retry Logic
+If the LLM suggests terms that don't exist in your vocabulary (hallucination), the system automatically:
+1. Identifies the invalid terms
+2. Asks the LLM to correct its response
+3. Returns only valid term suggestions
+
+This approach significantly improves accuracy compared to single-step classification.
+
+Use `--single-step` flag to disable this behaviour and use faster single-call classification.
+
 ## Model Recommendations
 
 ### OpenAI
@@ -274,13 +318,14 @@ wp taxonomy-audit generate-script --file=output/suggestions.csv --approved-only 
 | `gpt-4o-mini` | High | Fast | ~$0.15/1M tokens |
 | `gpt-4o` | Highest | Medium | ~$2.50/1M tokens |
 
-### Ollama (32GB Mac)
+### OpenRouter
 
-| Model | Quality | Speed |
-|-------|---------|-------|
-| `gemma3:27b` | Good | Medium |
-| `qwen2.5:32b` | Better | Slower |
-| `qwen2.5:14b` | Moderate | Fast |
+| Model | Quality | Speed | Cost |
+|-------|---------|-------|------|
+| `google/gemma-2-9b-it:free` | Good | Fast | Free |
+| `meta-llama/llama-3.1-8b-instruct:free` | Good | Fast | Free |
+| `deepseek/deepseek-chat` | High | Medium | Very low |
+| `anthropic/claude-3.5-sonnet` | Highest | Medium | Higher |
 
 ## Output Directory
 
@@ -306,8 +351,9 @@ add_filter( 'dgw_taxonomy_audit_config', function( $config ) {
 ## Security
 
 - All suggestions require human review before application
-- OpenAI: Content is sent to OpenAI API
-- Ollama: Content stays on your local machine
+- **Ollama**: Content stays on your local machine (private)
+- **OpenAI**: Content is sent to OpenAI API
+- **OpenRouter**: Content is routed through OpenRouter to various model providers
 - All database queries use `$wpdb->prepare()`
 - Generated shell commands are properly escaped
 
