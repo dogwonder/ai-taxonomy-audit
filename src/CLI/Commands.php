@@ -22,7 +22,7 @@ use DGWTaxonomyAudit\Output\SuggestionStore;
 use WP_CLI;
 
 /**
- * AI-powered taxonomy classification using LLM (Ollama or OpenAI).
+ * AI-powered taxonomy classification using LLM (Ollama, OpenAI, or OpenRouter).
  *
  * ## EXAMPLES
  *
@@ -34,6 +34,9 @@ use WP_CLI;
  *
  *     # Classify posts using OpenAI
  *     wp taxonomy-audit classify --provider=openai --model=gpt-4o-mini --limit=10
+ *
+ *     # Classify posts using OpenRouter (access to many models)
+ *     wp taxonomy-audit classify --provider=openrouter --model=google/gemma-2-9b-it:free
  *
  *     # Apply suggestions from CSV
  *     wp taxonomy-audit apply --file=suggestions.csv
@@ -92,10 +95,14 @@ class Commands {
 	 * options:
 	 *   - ollama
 	 *   - openai
+	 *   - openrouter
 	 * ---
 	 *
 	 * [--model=<model>]
-	 * : Model to use. Defaults: ollama=gemma3:27b, openai=gpt-4o-mini.
+	 * : Model to use. Defaults vary by provider.
+	 *
+	 * [--single-step]
+	 * : Use single-step classification instead of two-step conversation.
 	 *
 	 * [--min-confidence=<threshold>]
 	 * : Minimum confidence threshold (0-1).

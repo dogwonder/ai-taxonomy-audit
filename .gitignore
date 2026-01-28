@@ -1,0 +1,36 @@
+# Node
+/node_modules/
+
+# Composer: ignore dependencies but keep autoloader + metadata required for production builds
+/vendor/*
+!/vendor/autoload.php
+!/vendor/composer/
+!/vendor/composer/**
+
+# Build artifacts (generated during block builds)
+/blocks/**/build/
+
+# Tests & coverage
+/coverage/
+.phpunit.result.cache
+
+# Whisper models
+/models
+
+# IDE/editor
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Temporary files
+*.tmp
+*.temp
