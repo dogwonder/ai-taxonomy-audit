@@ -1,3 +1,7 @@
+
+# Virtual environments
+.env
+
 # Node
 /node_modules/
 
