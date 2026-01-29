@@ -11,6 +11,10 @@ Classifies WordPress posts against controlled vocabularies and generates WP-CLI 
 - **Retry logic**: Automatically corrects invalid term suggestions
 - **Confidence scoring**: Filter results by confidence threshold
 - **CSV workflow**: Export, review in spreadsheets, then apply approved changes
+- **Gap analysis**: Identify taxonomy health issues, unused terms, and coverage gaps
+- **Pruning tools**: Safely remove unused taxonomy terms with generated scripts
+- **Stratified sampling**: Sample across date ranges and categories for representative analysis
+- **Provider comparison**: Compare results between Ollama, OpenAI, and OpenRouter
 
 ## Requirements
 
@@ -94,6 +98,7 @@ wp taxonomy-audit classify [options]
 | `--single-step` | — | Use single API call instead of two-step conversation |
 | `--dry-run` | — | Preview without calling LLM |
 | `--unclassified-only` | — | Only process posts without terms |
+| `--sampling=<strategy>` | `sequential` | Sampling strategy: `sequential` or `stratified` |
 
 **Examples:**
 
@@ -118,6 +123,9 @@ wp taxonomy-audit classify --limit=50 --dry-run
 
 # Output directly to terminal (copyable commands)
 wp taxonomy-audit classify --format=terminal --limit=5
+
+# Use stratified sampling (across dates and categories)
+wp taxonomy-audit classify --limit=20 --sampling=stratified
 ```
 
 ### export-vocab
@@ -236,6 +244,172 @@ List saved suggestion files.
 wp taxonomy-audit list [--format=<fmt>]
 ```
 
+### gap-analysis
+
+Analyze taxonomy gaps between suggestions and vocabulary.
+
+```bash
+wp taxonomy-audit gap-analysis --suggestions=<path> [options]
+```
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--suggestions=<path>` | required | Path to suggestions JSON file |
+| `--taxonomies=<list>` | `category,post_tag` | Taxonomies to analyze |
+| `--format=<fmt>` | `table` | Output: `table` or `json` |
+| `--output=<path>` | — | Save JSON report to file |
+
+**Output includes:**
+
+- **Suggested new terms**: Terms the LLM suggested that don't exist in vocabulary
+- **Unused existing terms**: Terms in vocabulary that were never suggested
+- **Ambiguous terms**: Terms with low average confidence (may need clarification)
+- **Uncovered content**: Posts without adequate taxonomy suggestions
+- **Health score**: Overall taxonomy fitness (0-100)
+
+**Examples:**
+
+```bash
+# Run gap analysis with table output
+wp taxonomy-audit gap-analysis --suggestions=output/suggestions-2024-01-28.json
+
+# Save report as JSON
+wp taxonomy-audit gap-analysis --suggestions=output/suggestions.json --output=gap-report.json
+
+# Analyze specific taxonomies
+wp taxonomy-audit gap-analysis --suggestions=output/suggestions.json --taxonomies=topic,region
+```
+
+### unused-terms
+
+Find taxonomy terms with zero posts.
+
+```bash
+wp taxonomy-audit unused-terms [options]
+```
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--taxonomies=<list>` | `category,post_tag` | Taxonomies to check |
+| `--format=<fmt>` | `table` | Output: `table`, `json`, or `csv` |
+
+**Examples:**
+
+```bash
+# Find unused terms
+wp taxonomy-audit unused-terms
+
+# Check specific taxonomies
+wp taxonomy-audit unused-terms --taxonomies=category,topic
+
+# Export as JSON
+wp taxonomy-audit unused-terms --format=json
+```
+
+### mismatched-terms
+
+Find terms that don't semantically match analyzed content.
+
+These are terms that have posts assigned but were never suggested by the LLM, indicating they may be outdated, misapplied, or need description updates.
+
+```bash
+wp taxonomy-audit mismatched-terms --suggestions=<path> [options]
+```
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--suggestions=<path>` | required | Path to suggestions JSON file |
+| `--taxonomies=<list>` | `category,post_tag` | Taxonomies to check |
+| `--format=<fmt>` | `table` | Output: `table`, `json`, or `csv` |
+
+**Examples:**
+
+```bash
+# Find mismatched terms
+wp taxonomy-audit mismatched-terms --suggestions=output/suggestions.json
+
+# Export as CSV for review
+wp taxonomy-audit mismatched-terms --suggestions=output/suggestions.json --format=csv
+```
+
+### generate-prune-script
+
+Generate shell script to safely delete unused taxonomy terms.
+
+```bash
+wp taxonomy-audit generate-prune-script [options]
+```
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--taxonomies=<list>` | `category,post_tag` | Taxonomies to check |
+| `--output=<path>` | — | Output script path |
+| `--prefix=<cmd>` | `ddev wp` | WP-CLI command prefix |
+| `--no-confirm` | — | Skip confirmation prompts in script |
+
+**Examples:**
+
+```bash
+# Generate script to stdout
+wp taxonomy-audit generate-prune-script
+
+# Save to file
+wp taxonomy-audit generate-prune-script --output=prune-terms.sh
+
+# Use different WP-CLI prefix
+wp taxonomy-audit generate-prune-script --prefix="wp" --output=prune-terms.sh
+```
+
+The generated script includes:
+- Safety confirmation prompts (unless `--no-confirm`)
+- Comments showing term names
+- Grouping by taxonomy
+- Error handling with `set -e`
+
+### compare
+
+Compare classification results between different LLM providers.
+
+```bash
+wp taxonomy-audit compare --post-ids=<ids> [options]
+```
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--post-ids=<ids>` | required | Comma-separated list of post IDs |
+| `--providers=<list>` | `ollama,openai` | Providers to compare |
+| `--taxonomies=<list>` | `category,post_tag` | Taxonomies to classify |
+| `--format=<fmt>` | `table` | Output: `table` or `json` |
+| `--output=<path>` | — | Save JSON report to file |
+
+**Examples:**
+
+```bash
+# Compare Ollama vs OpenAI on specific posts
+wp taxonomy-audit compare --post-ids=123,456,789
+
+# Compare all three providers
+wp taxonomy-audit compare --post-ids=123,456 --providers=ollama,openai,openrouter
+
+# Save comparison report
+wp taxonomy-audit compare --post-ids=123,456,789 --output=comparison.json
+```
+
+**Output includes:**
+- Per-post term suggestions from each provider
+- Agreement analysis (which providers agree on which terms)
+- Summary statistics (full agreement, partial, no agreement)
+
 ## Workflow
 
 ### 1. Check Status
@@ -279,7 +453,34 @@ Open the CSV in a spreadsheet application. The columns are:
 
 Delete rows you don't want, or mark the `approved` column.
 
-### 5. Apply Approved Suggestions
+### 5. Analyze Taxonomy Gaps
+
+```bash
+# Run gap analysis to identify issues
+wp taxonomy-audit gap-analysis --suggestions=output/suggestions-{timestamp}.json
+```
+
+Review the report for:
+- Terms to potentially add to vocabulary
+- Unused terms to potentially prune
+- Ambiguous terms that need clarification
+- Content without adequate coverage
+
+### 6. Prune Unused Terms (Optional)
+
+```bash
+# Find terms with zero posts
+wp taxonomy-audit unused-terms
+
+# Generate safe deletion script
+wp taxonomy-audit generate-prune-script --output=prune-terms.sh
+
+# Review and run
+cat prune-terms.sh
+bash prune-terms.sh
+```
+
+### 7. Apply Approved Suggestions
 
 ```bash
 # Apply only approved rows

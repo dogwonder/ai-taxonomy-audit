@@ -10,6 +10,8 @@ return array(
     'DGWTaxonomyAudit\\CLI\\Commands' => $baseDir . '/src/CLI/Commands.php',
     'DGWTaxonomyAudit\\Core\\Classifier' => $baseDir . '/src/Core/Classifier.php',
     'DGWTaxonomyAudit\\Core\\ContentExporter' => $baseDir . '/src/Core/ContentExporter.php',
+    'DGWTaxonomyAudit\\Core\\ContentSampler' => $baseDir . '/src/Core/ContentSampler.php',
+    'DGWTaxonomyAudit\\Core\\GapAnalyzer' => $baseDir . '/src/Core/GapAnalyzer.php',
     'DGWTaxonomyAudit\\Core\\LLMClientInterface' => $baseDir . '/src/Core/LLMClientInterface.php',
     'DGWTaxonomyAudit\\Core\\OllamaClient' => $baseDir . '/src/Core/OllamaClient.php',
     'DGWTaxonomyAudit\\Core\\OpenAIClient' => $baseDir . '/src/Core/OpenAIClient.php',

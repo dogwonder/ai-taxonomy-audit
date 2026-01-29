@@ -75,6 +75,8 @@ class ComposerStaticInitc425db3f8e8f637b6ef77b0388f97f67
         'DGWTaxonomyAudit\\CLI\\Commands' => __DIR__ . '/../..' . '/src/CLI/Commands.php',
         'DGWTaxonomyAudit\\Core\\Classifier' => __DIR__ . '/../..' . '/src/Core/Classifier.php',
         'DGWTaxonomyAudit\\Core\\ContentExporter' => __DIR__ . '/../..' . '/src/Core/ContentExporter.php',
+        'DGWTaxonomyAudit\\Core\\ContentSampler' => __DIR__ . '/../..' . '/src/Core/ContentSampler.php',
+        'DGWTaxonomyAudit\\Core\\GapAnalyzer' => __DIR__ . '/../..' . '/src/Core/GapAnalyzer.php',
         'DGWTaxonomyAudit\\Core\\LLMClientInterface' => __DIR__ . '/../..' . '/src/Core/LLMClientInterface.php',
         'DGWTaxonomyAudit\\Core\\OllamaClient' => __DIR__ . '/../..' . '/src/Core/OllamaClient.php',
         'DGWTaxonomyAudit\\Core\\OpenAIClient' => __DIR__ . '/../..' . '/src/Core/OpenAIClient.php',
