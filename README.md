@@ -15,6 +15,7 @@ Classifies WordPress posts against controlled vocabularies and generates WP-CLI 
 - **Pruning tools**: Safely remove unused taxonomy terms with generated scripts
 - **Stratified sampling**: Sample across date ranges and categories for representative analysis
 - **Provider comparison**: Compare results between Ollama, OpenAI, and OpenRouter
+- **Run storage**: Track analysis runs with metadata, compare runs over time
 
 ## Requirements
 
@@ -99,6 +100,8 @@ wp taxonomy-audit classify [options]
 | `--dry-run` | — | Preview without calling LLM |
 | `--unclassified-only` | — | Only process posts without terms |
 | `--sampling=<strategy>` | `sequential` | Sampling strategy: `sequential` or `stratified` |
+| `--save-run` | — | Save results to structured run for historical tracking |
+| `--run-notes=<notes>` | — | Notes to attach to the run (requires `--save-run`) |
 
 **Examples:**
 
@@ -126,6 +129,9 @@ wp taxonomy-audit classify --format=terminal --limit=5
 
 # Use stratified sampling (across dates and categories)
 wp taxonomy-audit classify --limit=20 --sampling=stratified
+
+# Save results to a structured run for historical tracking
+wp taxonomy-audit classify --limit=100 --provider=openai --save-run --run-notes="Initial baseline"
 ```
 
 ### export-vocab
@@ -260,6 +266,7 @@ wp taxonomy-audit gap-analysis --suggestions=<path> [options]
 | `--taxonomies=<list>` | `category,post_tag` | Taxonomies to analyze |
 | `--format=<fmt>` | `table` | Output: `table` or `json` |
 | `--output=<path>` | — | Save JSON report to file |
+| `--save-run=<run-id>` | — | Add gap analysis to an existing run |
 
 **Output includes:**
 
@@ -280,6 +287,9 @@ wp taxonomy-audit gap-analysis --suggestions=output/suggestions.json --output=ga
 
 # Analyze specific taxonomies
 wp taxonomy-audit gap-analysis --suggestions=output/suggestions.json --taxonomies=topic,region
+
+# Add gap analysis to an existing run
+wp taxonomy-audit gap-analysis --suggestions=output/runs/2025-01-29T103000/suggestions.json --save-run=2025-01-29T103000
 ```
 
 ### unused-terms
@@ -410,6 +420,81 @@ wp taxonomy-audit compare --post-ids=123,456,789 --output=comparison.json
 - Agreement analysis (which providers agree on which terms)
 - Summary statistics (full agreement, partial, no agreement)
 
+### runs-list
+
+List all analysis runs.
+
+```bash
+wp taxonomy-audit runs-list [options]
+```
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--format=<fmt>` | `table` | Output: `table`, `json`, or `csv` |
+| `--limit=<n>` | `20` | Maximum runs to show |
+
+### runs-show
+
+Show details of a specific run.
+
+```bash
+wp taxonomy-audit runs-show <run-id> [options]
+```
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--format=<fmt>` | `yaml` | Output: `yaml` or `json` |
+
+**Example:**
+
+```bash
+wp taxonomy-audit runs-show 2025-01-29T103000
+```
+
+### runs-compare
+
+Compare two analysis runs.
+
+```bash
+wp taxonomy-audit runs-compare <run-id-a> <run-id-b> [options]
+```
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--format=<fmt>` | `table` | Output: `table` or `json` |
+
+**Output includes:**
+- Configuration differences between runs
+- Summary statistic differences
+- Files present in each run
+- Suggestion comparison (posts changed, unchanged, added, removed)
+
+**Example:**
+
+```bash
+wp taxonomy-audit runs-compare 2025-01-27T140000 2025-01-29T103000
+```
+
+### runs-delete
+
+Delete an analysis run.
+
+```bash
+wp taxonomy-audit runs-delete <run-id> [--yes]
+```
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--yes` | — | Skip confirmation prompt |
+
 ## Workflow
 
 ### 1. Check Status
@@ -532,9 +617,19 @@ Use `--single-step` flag to disable this behaviour and use faster single-call cl
 
 Generated files are saved to `wp-content/plugins/ai-taxonomy-audit/output/`:
 
-- `suggestions-{timestamp}.csv` — CSV format
-- `suggestions-{timestamp}.json` — JSON format
-- `set-terms-{timestamp}.sh` — Shell scripts
+```
+output/
+├── suggestions-{timestamp}.csv     # CSV format
+├── suggestions-{timestamp}.json    # JSON format
+├── set-terms-{timestamp}.sh        # Shell scripts
+├── runs/                           # Structured run storage
+│   └── {run-id}/
+│       ├── manifest.json           # Run metadata and config
+│       ├── suggestions.json        # Classification results
+│       └── gap-analysis.json       # Gap analysis (if run)
+└── applied/
+    └── {run-id}.json               # Record of applied changes
+```
 
 The `output/` directory has a `.gitignore` that excludes generated files.
 
