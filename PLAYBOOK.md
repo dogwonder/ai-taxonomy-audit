@@ -721,6 +721,7 @@ wp wptofile-graph validate-check
 ## Related Documentation
 
 - `README.md` — Full command reference
+- `BENCHMARKING.md` — Measuring classification improvement over time
 - `wp-to-file-graph/PLAN.md` — Development plan with GoingMeta integration and future enhancements
 - `wp-to-file-graph/README.md` — Graph export documentation
 

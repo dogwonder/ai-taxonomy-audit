@@ -804,6 +804,14 @@ add_filter( 'dgw_taxonomy_audit_config', function( $config ) {
 - All database queries use `$wpdb->prepare()`
 - Generated shell commands are properly escaped
 
+## Measuring Improvement
+
+See [BENCHMARKING.md](BENCHMARKING.md) for strategies to track classification accuracy over time:
+- Establishing baseline metrics
+- A/B testing configurations (e.g., with/without SKOS)
+- Precision, recall, and agreement rate tracking
+- Interpreting improvement trends
+
 ## License
 
 GPL-2.0+
