@@ -106,6 +106,7 @@ wp taxonomy-audit classify [options]
 | `--sampling=<strategy>` | `sequential` | Sampling strategy: `sequential` or `stratified` |
 | `--save-run` | — | Save results to structured run for historical tracking |
 | `--run-notes=<notes>` | — | Notes to attach to the run (requires `--save-run`) |
+| `--skos-context=<file>` | — | Path to SKOS Turtle file for hierarchical vocabulary context |
 
 **Examples:**
 
@@ -139,6 +140,30 @@ wp taxonomy-audit classify --limit=100 --provider=openai --save-run --run-notes=
 
 # Enable audit mode to discover vocabulary gaps (suggests new terms)
 wp taxonomy-audit classify --audit --provider=openai --limit=20 --format=csv
+
+# Use SKOS context for hierarchical vocabulary (requires wp-to-file-graph)
+wp taxonomy-audit classify --skos-context=vocab/category.skos.ttl --taxonomies=category --limit=20
+```
+
+**SKOS Context:**
+
+When you provide a SKOS Turtle file via `--skos-context`, the LLM receives hierarchical vocabulary information:
+- **Broader/narrower relationships** — helps LLM understand term specificity
+- **SKOS definitions** — richer context than WordPress term descriptions
+- **Hierarchical prompt formatting** — terms displayed as a tree, encouraging specific term selection
+
+Generate SKOS files using [wp-to-file-graph](https://github.com/dogwonder/wp-to-file-graph):
+
+```bash
+# Export taxonomy as SKOS
+wp wptofile-graph skos category --output=vocab/category.skos.ttl
+
+# Use in classification
+wp taxonomy-audit classify \
+    --taxonomies=category \
+    --skos-context=vocab/category.skos.ttl \
+    --provider=openai \
+    --limit=20
 ```
 
 **Audit Mode:**
@@ -622,6 +647,34 @@ If the LLM suggests terms that don't exist in your vocabulary (hallucination), t
 This approach significantly improves accuracy compared to single-step classification.
 
 Use `--single-step` flag to disable this behaviour and use faster single-call classification.
+
+### SKOS Context Enhancement
+
+When a SKOS Turtle file is provided via `--skos-context`, the vocabulary prompt changes from flat to hierarchical:
+
+**Without SKOS (flat):**
+```
+CATEGORY:
+  - climate ("Climate") - Actions addressing climate change
+  - mitigation ("Mitigation") - Actions to reduce emissions
+  - carbon-reduction ("Carbon Reduction")
+```
+
+**With SKOS (hierarchical):**
+```
+CATEGORY:
+(Terms organized hierarchically. Prefer specific terms when content is specific.)
+
+  - climate ("Climate") - Actions addressing climate change
+    - mitigation ("Mitigation") - Actions to reduce emissions
+      - carbon-reduction ("Carbon Reduction") - Reducing carbon output
+    - adaptation ("Adaptation") - Adjusting to climate impacts
+```
+
+This helps the LLM:
+1. Understand parent/child relationships between terms
+2. Choose more specific terms when content warrants it
+3. Use richer SKOS definitions instead of WordPress term descriptions
 
 ## Model Recommendations
 

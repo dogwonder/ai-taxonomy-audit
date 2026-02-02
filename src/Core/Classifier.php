@@ -72,6 +72,13 @@ class Classifier {
 	private ?CostTracker $cost_tracker = null;
 
 	/**
+	 * SKOS context data for hierarchical vocabulary formatting.
+	 *
+	 * @var array{concepts: array<string, array>}|null
+	 */
+	private ?array $skos_context = null;
+
+	/**
 	 * Constructor.
 	 *
 	 * @param LLMClientInterface|null $client             LLM client.
@@ -697,11 +704,19 @@ PROMPT;
 	/**
 	 * Format vocabulary for prompt.
 	 *
+	 * Uses hierarchical formatting when SKOS context is available.
+	 *
 	 * @param array<string, mixed> $vocabulary Vocabulary.
 	 *
 	 * @return string
 	 */
 	private function formatVocabulary( array $vocabulary ): string {
+		// Use hierarchical formatting if SKOS context is available.
+		if ( $this->hasSkosContext() ) {
+			return $this->formatVocabularyWithSkos( $vocabulary );
+		}
+
+		// Flat formatting (original behavior).
 		$parts = [];
 
 		foreach ( $vocabulary as $taxonomy => $terms ) {
@@ -720,6 +735,179 @@ PROMPT;
 		}
 
 		return implode( "\n", $parts );
+	}
+
+	/**
+	 * Format vocabulary with SKOS hierarchy.
+	 *
+	 * Organizes terms hierarchically using broader/narrower relationships.
+	 *
+	 * @param array<string, mixed> $vocabulary Vocabulary.
+	 *
+	 * @return string
+	 */
+	private function formatVocabularyWithSkos( array $vocabulary ): string {
+		$concepts = $this->skos_context['concepts'] ?? [];
+		$parts    = [];
+
+		foreach ( $vocabulary as $taxonomy => $terms ) {
+			$parts[] = strtoupper( $taxonomy ) . ':';
+			$parts[] = '(Terms organized hierarchically. Prefer specific terms when content is specific.)';
+			$parts[] = '';
+
+			// Build a lookup of terms by slug.
+			$term_lookup = [];
+			foreach ( $terms as $term ) {
+				$term_lookup[ $term['slug'] ] = $term;
+			}
+
+			// Find root terms (no broader) and render hierarchically.
+			$rendered = [];
+			foreach ( $terms as $term ) {
+				$slug        = $term['slug'];
+				$concept_key = $this->findConceptKey( $taxonomy, $slug, $concepts );
+
+				// Skip if already rendered (as a child).
+				if ( isset( $rendered[ $slug ] ) ) {
+					continue;
+				}
+
+				// Check if this term has a broader (parent) in the vocabulary.
+				$has_parent_in_vocab = false;
+				if ( null !== $concept_key && isset( $concepts[ $concept_key ]['broader'] ) ) {
+					$parent_key  = $concepts[ $concept_key ]['broader'];
+					$parent_slug = $this->extractSlugFromKey( $parent_key );
+					if ( isset( $term_lookup[ $parent_slug ] ) ) {
+						$has_parent_in_vocab = true;
+					}
+				}
+
+				// Only render root terms here (children are rendered recursively).
+				if ( ! $has_parent_in_vocab ) {
+					$this->formatTermWithHierarchy(
+						$term,
+						$taxonomy,
+						$concepts,
+						$term_lookup,
+						$parts,
+						$rendered,
+						1
+					);
+				}
+			}
+
+			$parts[] = '';
+		}
+
+		return implode( "\n", $parts );
+	}
+
+	/**
+	 * Format a term with its children (recursive).
+	 *
+	 * @param array<string, mixed>        $term        Term data.
+	 * @param string                      $taxonomy    Taxonomy name.
+	 * @param array<string, array>        $concepts    SKOS concepts.
+	 * @param array<string, array>        $term_lookup All terms by slug.
+	 * @param array<string>               $parts       Output parts (by reference).
+	 * @param array<string, bool>         $rendered    Already rendered slugs (by reference).
+	 * @param int                         $depth       Indentation depth.
+	 *
+	 * @return void
+	 */
+	private function formatTermWithHierarchy(
+		array $term,
+		string $taxonomy,
+		array $concepts,
+		array $term_lookup,
+		array &$parts,
+		array &$rendered,
+		int $depth
+	): void {
+		$slug        = $term['slug'];
+		$indent      = str_repeat( '  ', $depth );
+		$concept_key = $this->findConceptKey( $taxonomy, $slug, $concepts );
+
+		// Build the term line.
+		$line = $indent . '- ' . $slug;
+		if ( ! empty( $term['name'] ) && $term['name'] !== $slug ) {
+			$line .= ' ("' . $term['name'] . '")';
+		}
+
+		// Prefer SKOS definition, fallback to WP description.
+		$definition = null;
+		if ( null !== $concept_key && ! empty( $concepts[ $concept_key ]['definition'] ) ) {
+			$definition = $concepts[ $concept_key ]['definition'];
+		} elseif ( ! empty( $term['description'] ) ) {
+			$definition = $term['description'];
+		}
+
+		if ( null !== $definition ) {
+			$line .= ' - ' . substr( $definition, 0, 100 );
+		}
+
+		$parts[]           = $line;
+		$rendered[ $slug ] = true;
+
+		// Render children (narrower terms).
+		if ( null !== $concept_key && ! empty( $concepts[ $concept_key ]['narrower'] ) ) {
+			foreach ( $concepts[ $concept_key ]['narrower'] as $child_key ) {
+				$child_slug = $this->extractSlugFromKey( $child_key );
+
+				// Only render if the child is in our vocabulary and not yet rendered.
+				if ( isset( $term_lookup[ $child_slug ] ) && ! isset( $rendered[ $child_slug ] ) ) {
+					$this->formatTermWithHierarchy(
+						$term_lookup[ $child_slug ],
+						$taxonomy,
+						$concepts,
+						$term_lookup,
+						$parts,
+						$rendered,
+						$depth + 1
+					);
+				}
+			}
+		}
+	}
+
+	/**
+	 * Find the concept key for a taxonomy/slug combination.
+	 *
+	 * @param string               $taxonomy Taxonomy name.
+	 * @param string               $slug     Term slug.
+	 * @param array<string, array> $concepts SKOS concepts.
+	 *
+	 * @return string|null Concept key or null.
+	 */
+	private function findConceptKey( string $taxonomy, string $slug, array $concepts ): ?string {
+		// Try exact match: taxonomy/slug.
+		$key = $taxonomy . '/' . $slug;
+		if ( isset( $concepts[ $key ] ) ) {
+			return $key;
+		}
+
+		// Search by slug (fallback).
+		foreach ( $concepts as $concept_key => $concept ) {
+			if ( ( $concept['slug'] ?? '' ) === $slug ) {
+				if ( strpos( $concept_key, $taxonomy . '/' ) === 0 ) {
+					return $concept_key;
+				}
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Extract slug from a concept key.
+	 *
+	 * @param string $key Concept key (e.g., "category/climate").
+	 *
+	 * @return string Slug.
+	 */
+	private function extractSlugFromKey( string $key ): string {
+		$parts = explode( '/', $key );
+		return end( $parts );
 	}
 
 	/**
@@ -980,6 +1168,30 @@ PROMPT;
 	 */
 	public function isAuditMode(): bool {
 		return $this->audit_mode;
+	}
+
+	/**
+	 * Set SKOS context for hierarchical vocabulary formatting.
+	 *
+	 * When set, vocabulary prompts will include hierarchy information
+	 * (broader/narrower relationships) and SKOS definitions.
+	 *
+	 * @param array{concepts: array<string, array>} $skos_data Parsed SKOS data.
+	 *
+	 * @return self
+	 */
+	public function setSkosContext( array $skos_data ): self {
+		$this->skos_context = $skos_data;
+		return $this;
+	}
+
+	/**
+	 * Check if SKOS context is available.
+	 *
+	 * @return bool
+	 */
+	public function hasSkosContext(): bool {
+		return null !== $this->skos_context && ! empty( $this->skos_context['concepts'] );
 	}
 
 	/**

@@ -82,6 +82,7 @@ The complete knowledge graph maintenance pipeline:
 | **5. Export** | `wp wptofile rdf` | WordPress | `content/*.ttl` | — |
 | **6. Validate** | `wp wptofile-graph validate` | content + shapes | Report | Fix violations |
 | **7. Classify** | `wp taxonomy-audit classify` | content + vocab | Suggestions | — |
+| **7b. Classify (SKOS)** | `wp taxonomy-audit classify --skos-context=...` | content + SKOS vocab | Hierarchical suggestions | — |
 | **8. Audit** | `wp taxonomy-audit classify --audit` | content + vocab | Gaps + new terms | Review suggestions |
 | **9. Apply** | `wp taxonomy-audit apply` | Approved CSV | WordPress updated | Approve changes |
 | **10. Loop** | → Back to Step 5 | — | — | — |
@@ -262,20 +263,41 @@ wp wptofile-graph shapes \
 ```
 
 **Why these matter:**
-- **SKOS** provides hierarchies and definitions for smarter LLM classification (future enhancement)
+- **SKOS** provides hierarchies and definitions for smarter LLM classification (use with `--skos-context`)
 - **SHACL** validates that exported content meets quality constraints
 - **OWL** documents your content model for AI agents
+
+#### 2.4 Use SKOS for Enhanced Classification
+
+Once you have SKOS taxonomies exported, use them to give the LLM hierarchical context:
+
+```bash
+# Classification with SKOS context (hierarchical vocabulary)
+wp taxonomy-audit classify \
+    --post_type=clause \
+    --taxonomies=jurisdiction,climate-or-nature-outcome \
+    --skos-context=vocab/taxonomies.skos.ttl \
+    --provider=openai \
+    --limit=20
+```
+
+**Benefits of SKOS context:**
+- LLM sees parent/child relationships (e.g., "mitigation" is narrower than "climate")
+- SKOS definitions often richer than WordPress term descriptions
+- Encourages selection of specific terms when content is specific
+- Hierarchical prompt format visually shows term relationships
 
 ---
 
 ## Classification Modes
 
-The classifier supports two modes:
+The classifier supports two modes with optional SKOS enhancement:
 
 | Mode | Flag | Behaviour |
 |------|------|-----------|
 | **Benchmark** | *(default)* | Validates content against existing vocabulary only. Terms not in vocabulary are rejected. |
 | **Audit** | `--audit` | Benchmark + suggests new terms that should exist in the vocabulary. |
+| **+ SKOS Context** | `--skos-context=<file>` | Enhances either mode with hierarchical vocabulary from SKOS Turtle file. |
 
 ### Benchmark Mode (Default)
 
@@ -408,6 +430,29 @@ wp taxonomy-audit classify \
     --save-run \
     --run-notes="Production run - GPT-4o-mini"
 ```
+
+#### 4.2b Full Classification with SKOS Context (Recommended)
+
+For better term specificity, use SKOS hierarchical context:
+
+```bash
+wp taxonomy-audit classify \
+    --post_type=clause \
+    --limit=100 \
+    --taxonomies=jurisdiction,climate-or-nature-outcome \
+    --skos-context=vocab/taxonomies.skos.ttl \
+    --provider=openai \
+    --model=gpt-4o-mini \
+    --format=csv \
+    --min-confidence=0.7 \
+    --save-run \
+    --run-notes="Production run with SKOS context"
+```
+
+The SKOS file provides the LLM with:
+- Broader/narrower term relationships
+- SKOS definitions (often richer than WP descriptions)
+- Visual hierarchy in the prompt (indented child terms)
 
 #### 4.3 Run Gap Analysis
 
@@ -588,8 +633,12 @@ wp wptofile-graph validate export/rdf/ --shapes=shapes.ttl
 # Check status
 wp taxonomy-audit status
 
-# Classify posts
+# Classify posts (flat vocabulary)
 wp taxonomy-audit classify --post_type=<type> --limit=<n> --provider=<provider>
+
+# Classify posts (with SKOS hierarchical context)
+wp taxonomy-audit classify --post_type=<type> --limit=<n> --provider=<provider> \
+    --skos-context=vocab/taxonomies.skos.ttl
 
 # Gap analysis
 wp taxonomy-audit gap-analysis --suggestions=<file>

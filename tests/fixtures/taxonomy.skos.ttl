@@ -1,0 +1,55 @@
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix site: <https://example.com/> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+
+# Concept Scheme (Taxonomy definition)
+site:taxonomy-category a skos:ConceptScheme ;
+    skos:prefLabel "Category"@en .
+
+# Top-level concept
+site:category/climate a skos:Concept ;
+    skos:inScheme site:taxonomy-category ;
+    skos:prefLabel "Climate"@en ;
+    skos:definition "Actions addressing climate change"@en ;
+    skos:narrower site:category/mitigation, site:category/adaptation .
+
+# Child concepts
+site:category/mitigation a skos:Concept ;
+    skos:inScheme site:taxonomy-category ;
+    skos:prefLabel "Mitigation"@en ;
+    skos:definition "Actions to reduce emissions"@en ;
+    skos:broader site:category/climate ;
+    skos:narrower site:category/carbon-reduction .
+
+site:category/adaptation a skos:Concept ;
+    skos:inScheme site:taxonomy-category ;
+    skos:prefLabel "Adaptation"@en ;
+    skos:definition "Adjusting to climate impacts"@en ;
+    skos:broader site:category/climate .
+
+# Grandchild concept
+site:category/carbon-reduction a skos:Concept ;
+    skos:inScheme site:taxonomy-category ;
+    skos:prefLabel "Carbon Reduction"@en ;
+    skos:definition "Reducing carbon output"@en ;
+    skos:broader site:category/mitigation .
+
+# Standalone concept (no hierarchy)
+site:category/governance a skos:Concept ;
+    skos:inScheme site:taxonomy-category ;
+    skos:prefLabel "Governance"@en ;
+    skos:definition "Organisational governance matters"@en .
+
+# Second taxonomy for testing multiple schemes
+site:taxonomy-post_tag a skos:ConceptScheme ;
+    skos:prefLabel "Tags"@en .
+
+site:post_tag/sustainability a skos:Concept ;
+    skos:inScheme site:taxonomy-post_tag ;
+    skos:prefLabel "Sustainability"@en ;
+    skos:definition "Sustainable practices and policies"@en .
+
+site:post_tag/net-zero a skos:Concept ;
+    skos:inScheme site:taxonomy-post_tag ;
+    skos:prefLabel "Net Zero"@en ;
+    skos:definition "Achieving net zero emissions"@en .

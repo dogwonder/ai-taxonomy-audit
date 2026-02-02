@@ -18,6 +18,7 @@ use DGWTaxonomyAudit\Core\LLMClientInterface;
 use DGWTaxonomyAudit\Core\OllamaClient;
 use DGWTaxonomyAudit\Core\OpenAIClient;
 use DGWTaxonomyAudit\Core\OpenRouterClient;
+use DGWTaxonomyAudit\Core\SKOSParser;
 use DGWTaxonomyAudit\Core\TaxonomyExtractor;
 use DGWTaxonomyAudit\Output\CSVHandler;
 use DGWTaxonomyAudit\Output\RunStorage;
@@ -140,6 +141,11 @@ class Commands {
 	 * : In audit mode, the LLM will suggest both existing vocabulary terms AND new terms
 	 * : that it believes should exist. Results include an in_vocabulary flag to distinguish them.
 	 *
+	 * [--skos-context=<file>]
+	 * : Path to SKOS Turtle file for hierarchical vocabulary context.
+	 * : Use with wp-to-file-graph SKOS export to provide the LLM with taxonomy hierarchy
+	 * : (broader/narrower relationships) and richer term definitions.
+	 *
 	 * ## EXAMPLES
 	 *
 	 *     wp taxonomy-audit classify --post_type=post --limit=10 --format=csv
@@ -168,6 +174,29 @@ class Commands {
 		$save_run = isset( $assoc_args['save-run'] );
 		$run_notes = $assoc_args['run-notes'] ?? '';
 		$audit_mode = isset( $assoc_args['audit'] );
+		$skos_context_file = $assoc_args['skos-context'] ?? null;
+
+		// Parse SKOS context if provided.
+		$skos_data = null;
+		if ( null !== $skos_context_file ) {
+			if ( ! file_exists( $skos_context_file ) ) {
+				WP_CLI::error( sprintf( 'SKOS file not found: %s', $skos_context_file ) );
+			}
+
+			$skos_parser = new SKOSParser();
+			$skos_data = $skos_parser->parse( $skos_context_file );
+
+			if ( ! empty( $skos_data['errors'] ) ) {
+				WP_CLI::warning( sprintf( 'SKOS parsing warnings: %s', implode( ', ', $skos_data['errors'] ) ) );
+			}
+
+			if ( empty( $skos_data['concepts'] ) ) {
+				WP_CLI::warning( 'No SKOS concepts found in file. Continuing without hierarchy context.' );
+				$skos_data = null;
+			} else {
+				WP_CLI::log( sprintf( 'Loaded %d SKOS concepts for hierarchy context.', count( $skos_data['concepts'] ) ) );
+			}
+		}
 
 		// Validate taxonomies.
 		$extractor = new TaxonomyExtractor();
@@ -252,6 +281,10 @@ class Commands {
 		$classifier->setMinConfidence( $min_confidence );
 		$classifier->setTwoStep( $two_step_mode );
 		$classifier->setAuditMode( $audit_mode );
+
+		if ( null !== $skos_data ) {
+			$classifier->setSkosContext( $skos_data );
+		}
 
 		// Create progress bar.
 		$progress = \WP_CLI\Utils\make_progress_bar( 'Classifying posts', count( $post_ids ) );
