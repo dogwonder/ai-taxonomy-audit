@@ -94,6 +94,9 @@ class ScriptGenerator {
 	/**
 	 * Build shell script content.
 	 *
+	 * Only generates commands for confirmed terms (in_vocabulary: true or unset).
+	 * Suggested new terms (in_vocabulary: false) are listed as comments at the end.
+	 *
 	 * @param array<array{post_id: int, post_title: string, classifications: array}> $results Results.
 	 *
 	 * @return string Script content.
@@ -115,30 +118,106 @@ class ScriptGenerator {
 		];
 
 		$command_count = 0;
+		$suggested_terms = []; // Track suggested new terms.
 
 		foreach ( $results as $result ) {
 			if ( empty( $result['classifications'] ) ) {
 				continue;
 			}
 
-			$lines[] = sprintf(
-				'# Post: %s (ID: %d)',
-				$this->escapeComment( $result['post_title'] ),
-				$result['post_id']
-			);
+			$post_has_commands = false;
 
 			foreach ( $result['classifications'] as $taxonomy => $terms ) {
 				foreach ( $terms as $term_data ) {
 					$term = $term_data['term'];
+					$in_vocabulary = $term_data['in_vocabulary'] ?? true; // Default to true for backwards compat.
+
+					if ( $in_vocabulary === false ) {
+						// Collect suggested new terms.
+						$suggested_terms[] = [
+							'post_id'    => $result['post_id'],
+							'post_title' => $result['post_title'],
+							'taxonomy'   => $taxonomy,
+							'term'       => $term,
+							'reason'     => $term_data['reason'] ?? '',
+						];
+						continue;
+					}
+
+					// Only add comment header once per post.
+					if ( ! $post_has_commands ) {
+						$lines[] = sprintf(
+							'# Post: %s (ID: %d)',
+							$this->escapeComment( $result['post_title'] ),
+							$result['post_id']
+						);
+						$post_has_commands = true;
+					}
+
 					$lines[] = $this->buildCommand( $result['post_id'], $taxonomy, $term );
 					$command_count++;
 				}
 			}
 
-			$lines[] = '';
+			if ( $post_has_commands ) {
+				$lines[] = '';
+			}
 		}
 
 		$lines[] = sprintf( 'echo "Completed: %d term assignments"', $command_count );
+
+		// Add suggested new terms as comments at the end.
+		if ( ! empty( $suggested_terms ) ) {
+			$lines[] = '';
+			$lines[] = '#';
+			$lines[] = '# ═══════════════════════════════════════════════════════════════════════════';
+			$lines[] = '# SUGGESTED NEW TERMS (require manual creation before applying)';
+			$lines[] = '# ═══════════════════════════════════════════════════════════════════════════';
+			$lines[] = '#';
+			$lines[] = '# The following terms were suggested by the AI but do not exist in the';
+			$lines[] = '# vocabulary. Review these suggestions and create terms if appropriate:';
+			$lines[] = '#';
+
+			// Group by taxonomy.
+			$by_taxonomy = [];
+			foreach ( $suggested_terms as $suggestion ) {
+				$taxonomy = $suggestion['taxonomy'];
+				if ( ! isset( $by_taxonomy[ $taxonomy ] ) ) {
+					$by_taxonomy[ $taxonomy ] = [];
+				}
+				$by_taxonomy[ $taxonomy ][] = $suggestion;
+			}
+
+			foreach ( $by_taxonomy as $taxonomy => $suggestions ) {
+				$lines[] = sprintf( '# %s:', strtoupper( $taxonomy ) );
+
+				// Dedupe by term.
+				$seen = [];
+				foreach ( $suggestions as $suggestion ) {
+					$term = $suggestion['term'];
+					if ( isset( $seen[ $term ] ) ) {
+						continue;
+					}
+					$seen[ $term ] = true;
+
+					$lines[] = sprintf(
+						'#   - %s',
+						$term
+					);
+					if ( ! empty( $suggestion['reason'] ) ) {
+						$lines[] = sprintf(
+							'#     Reason: %s',
+							$this->escapeComment( $suggestion['reason'] )
+						);
+					}
+				}
+				$lines[] = '#';
+			}
+
+			$lines[] = '# To create a new term:';
+			$lines[] = sprintf( '# %s term create <taxonomy> <term-slug> --slug=<term-slug>', $this->prefix );
+			$lines[] = '#';
+		}
 
 		return implode( "\n", $lines );
 	}
@@ -197,6 +276,8 @@ class ScriptGenerator {
 	/**
 	 * Generate commands for terminal display (copyable).
 	 *
+	 * Only generates commands for confirmed terms (in_vocabulary: true or unset).
+	 *
 	 * @param array<array{post_id: int, post_title: string, classifications: array}> $results Results.
 	 *
 	 * @return array<string> Commands.
@@ -211,6 +292,11 @@ class ScriptGenerator {
 
 			foreach ( $result['classifications'] as $taxonomy => $terms ) {
 				foreach ( $terms as $term_data ) {
+					$in_vocabulary = $term_data['in_vocabulary'] ?? true;
+					if ( $in_vocabulary === false ) {
+						continue; // Skip suggested new terms.
+					}
+
 					$commands[] = $this->buildCommand(
 						$result['post_id'],
 						$taxonomy,
@@ -258,6 +344,8 @@ class ScriptGenerator {
 	/**
 	 * Count total commands that would be generated.
 	 *
+	 * Only counts confirmed terms (in_vocabulary: true or unset).
+	 *
 	 * @param array<array{classifications: array}> $results Results.
 	 *
 	 * @return int Command count.
@@ -271,7 +359,12 @@ class ScriptGenerator {
 			}
 
 			foreach ( $result['classifications'] as $terms ) {
-				$count += count( $terms );
+				foreach ( $terms as $term_data ) {
+					$in_vocabulary = $term_data['in_vocabulary'] ?? true;
+					if ( $in_vocabulary !== false ) {
+						$count++;
+					}
+				}
 			}
 		}
 
@@ -297,27 +390,91 @@ class ScriptGenerator {
 			'',
 		];
 
+		$suggested_terms = [];
+
 		foreach ( $results as $result ) {
 			if ( empty( $result['classifications'] ) ) {
 				continue;
 			}
 
-			$lines[] = sprintf(
-				'echo "Post: %s (ID: %d)"',
-				addslashes( $this->escapeComment( $result['post_title'] ) ),
-				$result['post_id']
-			);
+			$post_has_commands = false;
 
 			foreach ( $result['classifications'] as $taxonomy => $terms ) {
 				foreach ( $terms as $term_data ) {
+					$in_vocabulary = $term_data['in_vocabulary'] ?? true;
+
+					if ( $in_vocabulary === false ) {
+						$suggested_terms[] = [
+							'taxonomy' => $taxonomy,
+							'term'     => $term_data['term'],
+						];
+						continue;
+					}
+
+					if ( ! $post_has_commands ) {
+						$lines[] = sprintf(
+							'echo "Post: %s (ID: %d)"',
+							addslashes( $this->escapeComment( $result['post_title'] ) ),
+							$result['post_id']
+						);
+						$post_has_commands = true;
+					}
+
 					$command = $this->buildCommand( $result['post_id'], $taxonomy, $term_data['term'] );
 					$lines[] = sprintf( 'echo "  Would run: %s"', addslashes( $command ) );
 				}
 			}
 
-			$lines[] = '';
+			if ( $post_has_commands ) {
+				$lines[] = '';
+			}
+		}
+
+		// Show suggested new terms.
+		if ( ! empty( $suggested_terms ) ) {
+			$lines[] = 'echo ""';
+			$lines[] = 'echo "Suggested new terms (not in vocabulary):"';
+			$unique = [];
+			foreach ( $suggested_terms as $s ) {
+				$key = $s['taxonomy'] . ':' . $s['term'];
+				if ( ! isset( $unique[ $key ] ) ) {
+					$unique[ $key ] = $s;
+					$lines[] = sprintf(
+						'echo "  - %s: %s"',
+						addslashes( $s['taxonomy'] ),
+						addslashes( $s['term'] )
+					);
+				}
+			}
 		}
 
 		return implode( "\n", $lines );
+	}
+
+	/**
+	 * Count suggested new terms in results.
+	 *
+	 * @param array<array{classifications: array}> $results Results.
+	 *
+	 * @return int Count of suggested new terms.
+	 */
+	public function countSuggestedTerms( array $results ): int {
+		$count = 0;
+
+		foreach ( $results as $result ) {
+			if ( empty( $result['classifications'] ) ) {
+				continue;
+			}
+
+			foreach ( $result['classifications'] as $terms ) {
+				foreach ( $terms as $term_data ) {
+					if ( isset( $term_data['in_vocabulary'] ) && $term_data['in_vocabulary'] === false ) {
+						$count++;
+					}
+				}
+			}
+		}
+
+		return $count;
 	}
 }

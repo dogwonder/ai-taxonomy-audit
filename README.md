@@ -7,15 +7,18 @@ Classifies WordPress posts against controlled vocabularies and generates WP-CLI 
 ## Features
 
 - **Three provider options**: Ollama (local), OpenAI, or OpenRouter (access to 100+ models)
+- **Two classification modes**: Benchmark (vocabulary-only) or Audit (benchmark + gap-filling suggestions)
 - **Two-step classification**: Context-aware conversation for higher accuracy
 - **Retry logic**: Automatically corrects invalid term suggestions
 - **Confidence scoring**: Filter results by confidence threshold
 - **CSV workflow**: Export, review in spreadsheets, then apply approved changes
 - **Gap analysis**: Identify taxonomy health issues, unused terms, and coverage gaps
+- **Audit mode**: Suggest new taxonomy terms that should exist (gap-filling)
 - **Pruning tools**: Safely remove unused taxonomy terms with generated scripts
 - **Stratified sampling**: Sample across date ranges and categories for representative analysis
 - **Provider comparison**: Compare results between Ollama, OpenAI, and OpenRouter
 - **Run storage**: Track analysis runs with metadata, compare runs over time
+- **Cost tracking**: Estimate costs before running, track actual usage, compare provider pricing
 
 ## Requirements
 
@@ -96,8 +99,9 @@ wp taxonomy-audit classify [options]
 | `--format=<fmt>` | `csv` | Output: `csv`, `json`, or `terminal` |
 | `--prefix=<cmd>` | `ddev wp` | WP-CLI prefix for generated commands |
 | `--min-confidence=<n>` | `0.7` | Minimum confidence threshold (0-1) |
+| `--audit` | — | Enable audit mode: suggest new terms that should exist |
 | `--single-step` | — | Use single API call instead of two-step conversation |
-| `--dry-run` | — | Preview without calling LLM |
+| `--dry-run` | — | Preview posts and estimate costs without calling LLM |
 | `--unclassified-only` | — | Only process posts without terms |
 | `--sampling=<strategy>` | `sequential` | Sampling strategy: `sequential` or `stratified` |
 | `--save-run` | — | Save results to structured run for historical tracking |
@@ -121,8 +125,8 @@ wp taxonomy-audit classify --post-ids=123,456,789
 # Classify against custom taxonomies
 wp taxonomy-audit classify --taxonomies=topic,region,document_type
 
-# Preview what would be processed
-wp taxonomy-audit classify --limit=50 --dry-run
+# Preview posts and estimate costs before running
+wp taxonomy-audit classify --provider=openai --limit=50 --dry-run
 
 # Output directly to terminal (copyable commands)
 wp taxonomy-audit classify --format=terminal --limit=5
@@ -132,7 +136,20 @@ wp taxonomy-audit classify --limit=20 --sampling=stratified
 
 # Save results to a structured run for historical tracking
 wp taxonomy-audit classify --limit=100 --provider=openai --save-run --run-notes="Initial baseline"
+
+# Enable audit mode to discover vocabulary gaps (suggests new terms)
+wp taxonomy-audit classify --audit --provider=openai --limit=20 --format=csv
 ```
+
+**Audit Mode:**
+
+In audit mode (`--audit`), the LLM will:
+1. Classify content against your existing vocabulary (benchmark)
+2. Suggest new terms that should exist but don't (gap-filling)
+
+Output includes an `in_vocabulary` column:
+- `TRUE` — term exists in your vocabulary
+- `FALSE` — suggested new term (requires manual creation before applying)
 
 ### export-vocab
 
@@ -513,15 +530,23 @@ wp taxonomy-audit export-vocab --taxonomies=category,post_tag --format=table
 
 Ensure your taxonomies have the terms you expect.
 
-### 3. Classify Posts
+### 3. Estimate Costs (Optional)
+
+```bash
+wp taxonomy-audit classify --provider=openai --limit=50 --dry-run
+```
+
+Review the cost estimate and provider comparison before running.
+
+### 4. Classify Posts
 
 ```bash
 wp taxonomy-audit classify --provider=openai --limit=50 --format=csv
 ```
 
-This generates a CSV file in `output/suggestions-{timestamp}.csv`.
+This generates a CSV file in `output/suggestions-{timestamp}.csv` and displays usage summary.
 
-### 4. Review Suggestions
+### 5. Review Suggestions
 
 Open the CSV in a spreadsheet application. The columns are:
 
@@ -534,11 +559,14 @@ Open the CSV in a spreadsheet application. The columns are:
 | `suggested_term` | Suggested term slug |
 | `confidence` | Confidence score (0-1) |
 | `reason` | LLM's reasoning |
+| `in_vocabulary` | `TRUE` if term exists, `FALSE` if suggested new term (audit mode) |
 | `approved` | Mark `TRUE` or `YES` to approve |
 
 Delete rows you don't want, or mark the `approved` column.
 
-### 5. Analyze Taxonomy Gaps
+**Note:** When applying suggestions, only terms with `in_vocabulary: TRUE` (or empty) will be applied. Suggested new terms (`in_vocabulary: FALSE`) must be created manually first using `wp term create <taxonomy> <term-slug>`.
+
+### 6. Analyze Taxonomy Gaps
 
 ```bash
 # Run gap analysis to identify issues
@@ -551,7 +579,7 @@ Review the report for:
 - Ambiguous terms that need clarification
 - Content without adequate coverage
 
-### 6. Prune Unused Terms (Optional)
+### 7. Prune Unused Terms (Optional)
 
 ```bash
 # Find terms with zero posts
@@ -565,7 +593,7 @@ cat prune-terms.sh
 bash prune-terms.sh
 ```
 
-### 7. Apply Approved Suggestions
+### 8. Apply Approved Suggestions
 
 ```bash
 # Apply only approved rows
@@ -612,6 +640,76 @@ Use `--single-step` flag to disable this behaviour and use faster single-call cl
 | `meta-llama/llama-3.1-8b-instruct:free` | Good | Fast | Free |
 | `deepseek/deepseek-chat` | High | Medium | Very low |
 | `anthropic/claude-3.5-sonnet` | Highest | Medium | Higher |
+
+## Cost Tracking
+
+The plugin tracks token usage and calculates costs for API-based providers.
+
+### Estimating Costs Before Running
+
+Use `--dry-run` to see cost estimates before committing:
+
+```bash
+wp taxonomy-audit classify --provider=openai --limit=50 --dry-run
+```
+
+Output includes:
+
+```
+=== Cost Estimate ===
+Provider: openai
+Model: gpt-4o-mini
+Estimated input tokens: 45,000
+Estimated output tokens: 15,000
+Estimated API calls: 100
+Estimated cost: $0.0158
+
+--- Provider Comparison ---
+  Ollama (local): Free
+  OpenAI gpt-4o-mini: $0.0158
+  OpenAI gpt-4o: $0.2625
+  OpenRouter Gemma (free): Free
+  OpenRouter Claude Haiku: $0.0300
+```
+
+### Actual Usage Summary
+
+After classification completes, you'll see actual usage:
+
+```
+=== Usage Summary ===
+Provider: openai
+Model: gpt-4o-mini
+API requests: 100
+Input tokens: 43,521
+Output tokens: 14,892
+Total tokens: 58,413
+Cost: $0.0155
+```
+
+### Stored Usage Data
+
+When using `--save-run`, usage data is stored with the run metadata for historical tracking:
+
+```bash
+wp taxonomy-audit classify --provider=openai --limit=100 --save-run
+
+# View run details including usage
+wp taxonomy-audit runs-show 2025-01-30T120000
+```
+
+### Local vs Cloud Cost Comparison
+
+| Factor | Ollama (Local) | Cloud API |
+|--------|----------------|-----------|
+| Per-request cost | Free | Per token |
+| Hardware | GPU investment (~$300-1500) | None |
+| Electricity | ~$0.02-0.05/hour during use | None |
+| Speed | Varies (GPU dependent) | Fast |
+| Privacy | Data stays local | Data sent to API |
+| Breakeven | ~10,000+ classifications/month | Under ~1,000/month |
+
+For small projects or occasional use, cloud APIs are often more cost-effective. For high-volume or privacy-sensitive workloads, local Ollama may be preferable.
 
 ## Output Directory
 

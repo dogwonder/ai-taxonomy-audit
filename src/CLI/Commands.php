@@ -12,6 +12,7 @@ namespace DGWTaxonomyAudit\CLI;
 use DGWTaxonomyAudit\Core\Classifier;
 use DGWTaxonomyAudit\Core\ContentExporter;
 use DGWTaxonomyAudit\Core\ContentSampler;
+use DGWTaxonomyAudit\Core\CostTracker;
 use DGWTaxonomyAudit\Core\GapAnalyzer;
 use DGWTaxonomyAudit\Core\LLMClientInterface;
 use DGWTaxonomyAudit\Core\OllamaClient;
@@ -134,6 +135,11 @@ class Commands {
 	 * [--run-notes=<notes>]
 	 * : Optional notes to attach to the run (requires --save-run).
 	 *
+	 * [--audit]
+	 * : Enable audit mode to suggest new taxonomy terms that don't exist in vocabulary.
+	 * : In audit mode, the LLM will suggest both existing vocabulary terms AND new terms
+	 * : that it believes should exist. Results include an in_vocabulary flag to distinguish them.
+	 *
 	 * ## EXAMPLES
 	 *
 	 *     wp taxonomy-audit classify --post_type=post --limit=10 --format=csv
@@ -161,6 +167,7 @@ class Commands {
 		$sampling = $assoc_args['sampling'] ?? 'sequential';
 		$save_run = isset( $assoc_args['save-run'] );
 		$run_notes = $assoc_args['run-notes'] ?? '';
+		$audit_mode = isset( $assoc_args['audit'] );
 
 		// Validate taxonomies.
 		$extractor = new TaxonomyExtractor();
@@ -190,9 +197,6 @@ class Commands {
 			];
 			WP_CLI::error( $error_messages[ $provider ] ?? 'Provider not available.' );
 		}
-
-		// Handle single-step flag.
-		$single_step = isset( $assoc_args['single-step'] );
 
 		// Get posts to process.
 		if ( ! empty( $assoc_args['post-ids'] ) ) {
@@ -232,17 +236,22 @@ class Commands {
 		WP_CLI::log( sprintf( 'Taxonomies: %s', implode( ', ', $taxonomies ) ) );
 		WP_CLI::log( sprintf( 'Provider: %s', $client->getProvider() ) );
 		WP_CLI::log( sprintf( 'Model: %s', $client->getModel() ) );
+		WP_CLI::log( sprintf( 'Mode: %s', $audit_mode ? 'audit (gap-filling enabled)' : 'benchmark (vocabulary-only)' ) );
 		WP_CLI::log( '' );
 
+		// Handle single-step flag.
+		$two_step_mode = ! isset( $assoc_args['single-step'] );
+
 		if ( $dry_run ) {
-			$this->showDryRun( $post_ids );
+			$this->showDryRun( $post_ids, $client, $taxonomies, $two_step_mode );
 			return;
 		}
 
 		// Create classifier.
 		$classifier = new Classifier( $client, $extractor );
 		$classifier->setMinConfidence( $min_confidence );
-		$classifier->setTwoStep( ! $single_step );
+		$classifier->setTwoStep( $two_step_mode );
+		$classifier->setAuditMode( $audit_mode );
 
 		// Create progress bar.
 		$progress = \WP_CLI\Utils\make_progress_bar( 'Classifying posts', count( $post_ids ) );
@@ -261,6 +270,12 @@ class Commands {
 
 		$progress->finish();
 
+		// Get usage statistics.
+		$usage = $classifier->getUsage();
+
+		// Show cost summary.
+		$this->outputCostSummary( $usage, $client );
+
 		// Save to run if requested.
 		if ( $save_run ) {
 			$run_storage = new RunStorage();
@@ -274,6 +289,7 @@ class Commands {
 				'sampling'             => $sampling,
 				'min_confidence'       => $min_confidence,
 				'unclassified_only'    => $unclassified_only,
+				'audit_mode'           => $audit_mode,
 			];
 
 			try {
@@ -307,6 +323,7 @@ class Commands {
 					'posts_with_suggestions' => $posts_with_suggestions,
 					'total_suggestions'      => $total_suggestions,
 					'by_taxonomy'            => $by_taxonomy,
+					'usage'                  => $usage,
 				];
 
 				$run_storage->addFile( $run_id, 'suggestions', $suggestions_data, $summary );
@@ -686,26 +703,84 @@ class Commands {
 	}
 
 	/**
-	 * Show dry run information.
+	 * Show dry run information with cost estimates.
 	 *
-	 * @param array<int> $post_ids Post IDs.
+	 * @param array<int>          $post_ids   Post IDs.
+	 * @param LLMClientInterface  $client     LLM client.
+	 * @param array<string>       $taxonomies Taxonomies.
+	 * @param bool                $two_step   Whether using two-step mode.
 	 *
 	 * @return void
 	 */
-	private function showDryRun( array $post_ids ): void {
+	private function showDryRun( array $post_ids, LLMClientInterface $client, array $taxonomies, bool $two_step = true ): void {
 		WP_CLI::log( '=== DRY RUN ===' );
 		WP_CLI::log( 'Would process the following posts:' );
 		WP_CLI::log( '' );
+
+		$total_content_length = 0;
+		$config = \DGWTaxonomyAudit\get_config();
+		$max_content_length = $config['classification']['max_content_length'];
 
 		foreach ( $post_ids as $post_id ) {
 			$post = get_post( $post_id );
 			if ( $post ) {
 				WP_CLI::log( sprintf( '  [%d] %s', $post_id, $post->post_title ) );
+				// Estimate content length (capped at max).
+				$content_length = min( mb_strlen( $post->post_content ), $max_content_length );
+				$total_content_length += $content_length;
 			}
 		}
 
+		$avg_content_length = count( $post_ids ) > 0
+			? (int) ( $total_content_length / count( $post_ids ) )
+			: 500;
+
 		WP_CLI::log( '' );
 		WP_CLI::log( sprintf( 'Total: %d posts', count( $post_ids ) ) );
+
+		// Calculate vocabulary size.
+		$extractor = new TaxonomyExtractor();
+		$vocabulary = $extractor->getVocabulary( $taxonomies );
+		$vocab_size = 0;
+		foreach ( $vocabulary as $tax_terms ) {
+			foreach ( $tax_terms as $term ) {
+				$vocab_size += mb_strlen( $term['slug'] ?? '' );
+				$vocab_size += mb_strlen( $term['name'] ?? '' );
+				$vocab_size += mb_strlen( $term['description'] ?? '' );
+			}
+		}
+
+		// Get cost estimates.
+		$cost_tracker = new CostTracker( $client->getProvider(), $client->getModel() );
+		$estimate = $cost_tracker->estimateCost(
+			count( $post_ids ),
+			$avg_content_length,
+			$vocab_size,
+			$two_step
+		);
+
+		WP_CLI::log( '' );
+		WP_CLI::log( '=== Cost Estimate ===' );
+		WP_CLI::log( sprintf( 'Provider: %s', $client->getProvider() ) );
+		WP_CLI::log( sprintf( 'Model: %s', $client->getModel() ) );
+		WP_CLI::log( sprintf( 'Estimated input tokens: %s', number_format( $estimate['estimated_input_tokens'] ) ) );
+		WP_CLI::log( sprintf( 'Estimated output tokens: %s', number_format( $estimate['estimated_output_tokens'] ) ) );
+		WP_CLI::log( sprintf( 'Estimated API calls: %d', $estimate['estimated_requests'] ) );
+		WP_CLI::log( sprintf( 'Estimated cost: %s', $estimate['cost_formatted'] ) );
+
+		// Show comparison with other providers.
+		if ( 'ollama' !== $client->getProvider() ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( '--- Provider Comparison ---' );
+			$comparison = CostTracker::compareProviders(
+				$estimate['estimated_input_tokens'],
+				$estimate['estimated_output_tokens']
+			);
+			foreach ( $comparison as $label => $data ) {
+				WP_CLI::log( sprintf( '  %s: %s', $label, $data['cost_formatted'] ) );
+			}
+		}
+
 		WP_CLI::log( '' );
 		WP_CLI::log( 'Remove --dry-run to process these posts.' );
 	}
@@ -760,6 +835,37 @@ class Commands {
 			case 'terminal':
 				$this->outputTerminal( $results, $prefix );
 				break;
+		}
+	}
+
+	/**
+	 * Output cost summary after classification.
+	 *
+	 * @param array{input_tokens: int, output_tokens: int, total_tokens: int, requests: int, cost: float, cost_formatted: string} $usage  Usage data.
+	 * @param LLMClientInterface                                                                                                  $client LLM client.
+	 *
+	 * @return void
+	 */
+	private function outputCostSummary( array $usage, LLMClientInterface $client ): void {
+		WP_CLI::log( '' );
+		WP_CLI::log( '=== Usage Summary ===' );
+		WP_CLI::log( sprintf( 'Provider: %s', $client->getProvider() ) );
+		WP_CLI::log( sprintf( 'Model: %s', $client->getModel() ) );
+		WP_CLI::log( sprintf( 'API requests: %d', $usage['requests'] ) );
+		WP_CLI::log( sprintf( 'Input tokens: %s', number_format( $usage['input_tokens'] ) ) );
+		WP_CLI::log( sprintf( 'Output tokens: %s', number_format( $usage['output_tokens'] ) ) );
+		WP_CLI::log( sprintf( 'Total tokens: %s', number_format( $usage['total_tokens'] ) ) );
+		WP_CLI::log( sprintf( 'Cost: %s', $usage['cost_formatted'] ) );
+
+		// Show comparison if using a paid provider.
+		if ( 'ollama' !== $client->getProvider() && $usage['total_tokens'] > 0 ) {
+			WP_CLI::log( '' );
+			WP_CLI::log( '--- Cost Comparison ---' );
+			$comparison = CostTracker::compareProviders( $usage['input_tokens'], $usage['output_tokens'] );
+			foreach ( $comparison as $label => $data ) {
+				$marker = $data['cost'] === $usage['cost'] ? ' (current)' : '';
+				WP_CLI::log( sprintf( '  %s: %s%s', $label, $data['cost_formatted'], $marker ) );
+			}
 		}
 	}
 

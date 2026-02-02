@@ -27,6 +27,7 @@ class CSVHandler {
 		'suggested_term',
 		'confidence',
 		'reason',
+		'in_vocabulary',
 		'approved',
 	];
 
@@ -74,6 +75,7 @@ class CSVHandler {
 						'suggested_term' => $term['term'],
 						'confidence'     => (string) round( $term['confidence'], 2 ),
 						'reason'         => $term['reason'] ?? '',
+						'in_vocabulary'  => isset( $term['in_vocabulary'] ) ? ( $term['in_vocabulary'] ? 'TRUE' : 'FALSE' ) : '',
 						'approved'       => '',
 					];
 				}
@@ -189,13 +191,18 @@ class CSVHandler {
 				}
 			}
 
+			// Parse in_vocabulary field.
+			$in_vocab_raw = strtolower( trim( $data['in_vocabulary'] ?? '' ) );
+			$in_vocabulary = in_array( $in_vocab_raw, [ 'true', 'yes', '1' ], true ) ? true : ( in_array( $in_vocab_raw, [ 'false', 'no', '0' ], true ) ? false : null );
+
 			$suggestions[] = [
-				'post_id'    => (int) $data['post_id'],
-				'post_title' => $data['post_title'] ?? '',
-				'taxonomy'   => $data['taxonomy'],
-				'term'       => $data['suggested_term'],
-				'confidence' => (float) $data['confidence'],
-				'reason'     => $data['reason'] ?? '',
+				'post_id'       => (int) $data['post_id'],
+				'post_title'    => $data['post_title'] ?? '',
+				'taxonomy'      => $data['taxonomy'],
+				'term'          => $data['suggested_term'],
+				'confidence'    => (float) $data['confidence'],
+				'reason'        => $data['reason'] ?? '',
+				'in_vocabulary' => $in_vocabulary,
 			];
 		}
 

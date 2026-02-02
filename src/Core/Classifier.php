@@ -55,6 +55,23 @@ class Classifier {
 	private bool $two_step = true;
 
 	/**
+	 * Whether to include gap-filling suggestions (audit mode).
+	 *
+	 * In audit mode, the LLM can suggest new terms that don't exist in the vocabulary.
+	 * These are marked with `in_vocabulary: false` in the output.
+	 *
+	 * @var bool
+	 */
+	private bool $audit_mode = false;
+
+	/**
+	 * Cost tracker for usage statistics.
+	 *
+	 * @var CostTracker|null
+	 */
+	private ?CostTracker $cost_tracker = null;
+
+	/**
 	 * Constructor.
 	 *
 	 * @param LLMClientInterface|null $client             LLM client.
@@ -75,6 +92,12 @@ class Classifier {
 		);
 
 		$this->min_confidence = $config['classification']['min_confidence_threshold'];
+
+		// Initialize cost tracker.
+		$this->cost_tracker = new CostTracker(
+			$this->client->getProvider(),
+			$this->client->getModel()
+		);
 	}
 
 	/**
@@ -109,19 +132,36 @@ class Classifier {
 
 			$classifications = $result['classifications'] ?? [];
 
-			// Validate and retry if needed.
-			$invalid_terms = $this->findInvalidTerms( $classifications, $vocabulary );
+			if ( $this->audit_mode ) {
+				// In audit mode: preserve suggested new terms, only retry for terms
+				// that aren't explicitly marked as suggested.
+				$invalid_terms = $this->findInvalidTermsForAudit( $classifications, $vocabulary );
 
-			if ( ! empty( $invalid_terms ) && isset( $result['messages'] ) ) {
-				$result = $this->retryWithCorrection( $result['messages'], $invalid_terms, $vocabulary );
-				$classifications = $result['classifications'] ?? [];
+				if ( ! empty( $invalid_terms ) && isset( $result['messages'] ) ) {
+					$result = $this->retryWithCorrection( $result['messages'], $invalid_terms, $vocabulary );
+					$classifications = $result['classifications'] ?? [];
+				}
+
+				// Filter by minimum confidence.
+				$classifications = $this->filterByConfidence( $classifications );
+
+				// Validate vocab terms and mark in_vocabulary flag.
+				$classifications = $this->validateAndMarkTerms( $classifications, $vocabulary );
+			} else {
+				// In benchmark mode: validate and retry if needed.
+				$invalid_terms = $this->findInvalidTerms( $classifications, $vocabulary );
+
+				if ( ! empty( $invalid_terms ) && isset( $result['messages'] ) ) {
+					$result = $this->retryWithCorrection( $result['messages'], $invalid_terms, $vocabulary );
+					$classifications = $result['classifications'] ?? [];
+				}
+
+				// Filter by minimum confidence.
+				$classifications = $this->filterByConfidence( $classifications );
+
+				// Final validation (remove any remaining invalid terms).
+				$classifications = $this->validateTerms( $classifications, $vocabulary );
 			}
-
-			// Filter by minimum confidence.
-			$classifications = $this->filterByConfidence( $classifications );
-
-			// Final validation (remove any remaining invalid terms).
-			$classifications = $this->validateTerms( $classifications, $vocabulary );
 
 			return [
 				'post_id'         => $post_id,
@@ -153,7 +193,9 @@ class Classifier {
 		$messages = [
 			[
 				'role'    => 'system',
-				'content' => $this->getSystemPrompt(),
+				'content' => $this->audit_mode
+					? $this->getAuditSystemPrompt()
+					: $this->getSystemPrompt(),
 			],
 		];
 
@@ -164,6 +206,7 @@ class Classifier {
 		];
 
 		$response = $this->client->chat( $messages, false );
+		$this->recordUsage( $response );
 		$assistant_reply = $response['message']['content'] ?? '';
 
 		$messages[] = [
@@ -174,10 +217,13 @@ class Classifier {
 		// Step 2: Request classification.
 		$messages[] = [
 			'role'    => 'user',
-			'content' => $this->getClassificationPrompt( $vocabulary ),
+			'content' => $this->audit_mode
+				? $this->getAuditClassificationPrompt( $vocabulary )
+				: $this->getClassificationPrompt( $vocabulary ),
 		];
 
 		$response = $this->client->chat( $messages, true );
+		$this->recordUsage( $response );
 		$classification_reply = $response['message']['content'] ?? '';
 
 		$messages[] = [
@@ -207,15 +253,20 @@ class Classifier {
 		$messages = [
 			[
 				'role'    => 'system',
-				'content' => $this->getSystemPrompt(),
+				'content' => $this->audit_mode
+					? $this->getAuditSystemPrompt()
+					: $this->getSystemPrompt(),
 			],
 			[
 				'role'    => 'user',
-				'content' => $this->getSingleStepPrompt( $content, $vocabulary ),
+				'content' => $this->audit_mode
+					? $this->getAuditSingleStepPrompt( $content, $vocabulary )
+					: $this->getSingleStepPrompt( $content, $vocabulary ),
 			],
 		];
 
 		$response = $this->client->chat( $messages, true );
+		$this->recordUsage( $response );
 		$reply = $response['message']['content'] ?? '';
 
 		$messages[] = [
@@ -250,6 +301,7 @@ class Classifier {
 		];
 
 		$response = $this->client->chat( $messages, true );
+		$this->recordUsage( $response );
 		$reply = $response['message']['content'] ?? '';
 
 		$parsed = $this->parseClassificationResponse( $reply );
@@ -266,6 +318,24 @@ class Classifier {
 		}
 
 		return $parsed;
+	}
+
+	/**
+	 * Record usage data from an API response.
+	 *
+	 * @param array<string, mixed> $response API response.
+	 *
+	 * @return void
+	 */
+	private function recordUsage( array $response ): void {
+		if ( null === $this->cost_tracker ) {
+			return;
+		}
+
+		$usage = $response['usage'] ?? [];
+		if ( ! empty( $usage ) ) {
+			$this->cost_tracker->recordUsage( $usage );
+		}
 	}
 
 	/**
@@ -289,6 +359,47 @@ class Classifier {
 			foreach ( $terms as $term ) {
 				$slug = $term['term'] ?? '';
 				if ( ! empty( $slug ) && ! in_array( $slug, $valid_slugs, true ) ) {
+					$invalid[] = $slug;
+				}
+			}
+		}
+
+		return $invalid;
+	}
+
+	/**
+	 * Find terms that are invalid in audit mode.
+	 *
+	 * In audit mode, terms explicitly marked as in_vocabulary: false are valid suggestions.
+	 * This only flags terms not in vocabulary that weren't marked as suggestions.
+	 *
+	 * @param array<string, array> $classifications Classifications.
+	 * @param array<string, array> $vocabulary      Vocabulary.
+	 *
+	 * @return array<string> Invalid term slugs.
+	 */
+	private function findInvalidTermsForAudit( array $classifications, array $vocabulary ): array {
+		$invalid = [];
+
+		foreach ( $classifications as $taxonomy => $terms ) {
+			if ( ! isset( $vocabulary[ $taxonomy ] ) ) {
+				continue;
+			}
+
+			$valid_slugs = array_column( $vocabulary[ $taxonomy ], 'slug' );
+
+			foreach ( $terms as $term ) {
+				$slug = $term['term'] ?? '';
+				if ( empty( $slug ) ) {
+					continue;
+				}
+
+				$in_vocabulary = $term['in_vocabulary'] ?? null;
+				$is_valid_slug = in_array( $slug, $valid_slugs, true );
+
+				// Invalid if: not in vocabulary AND not explicitly marked as a suggestion.
+				// If in_vocabulary is null, we assume the LLM didn't follow instructions.
+				if ( ! $is_valid_slug && $in_vocabulary !== false ) {
 					$invalid[] = $slug;
 				}
 			}
@@ -428,6 +539,57 @@ PROMPT;
 	}
 
 	/**
+	 * Get the single-step prompt for audit mode (combined context + classification).
+	 *
+	 * @param string               $content    Post content.
+	 * @param array<string, mixed> $vocabulary Vocabulary.
+	 *
+	 * @return string
+	 */
+	private function getAuditSingleStepPrompt( string $content, array $vocabulary ): string {
+		$vocab_text = $this->formatVocabulary( $vocabulary );
+
+		return <<<PROMPT
+Classify the following content and suggest new terms that should exist in the vocabulary.
+
+CONTENT:
+
+{$content}
+
+EXISTING VOCABULARY:
+
+{$vocab_text}
+
+CLASSIFICATION PROCESS:
+
+Step 1: BENCHMARK - Identify matching terms from the vocabulary above
+Step 2: GAP ANALYSIS - Identify concepts in the content that SHOULD have a term but don't
+Step 3: For each term (existing or suggested), assign confidence and brief reason
+
+RULES:
+1. Use exact slugs for existing terms
+2. Use kebab-case for suggested new terms (e.g., "climate-adaptation", "net-zero-target")
+3. Mark existing terms with "in_vocabulary": true
+4. Mark suggested new terms with "in_vocabulary": false
+5. Maximum 5 existing terms per taxonomy
+6. Maximum 3 suggested new terms per taxonomy
+7. Only suggest new terms that genuinely fill vocabulary gaps
+
+Return JSON in this exact format:
+{
+  "classifications": {
+    "taxonomy_slug": [
+      {"term": "existing-term", "confidence": 0.95, "reason": "Brief explanation", "in_vocabulary": true},
+      {"term": "suggested-new-term", "confidence": 0.80, "reason": "Why this term should exist", "in_vocabulary": false}
+    ]
+  }
+}
+
+IMPORTANT: Be conservative with new term suggestions. Only suggest terms that represent genuine concepts missing from the vocabulary.
+PROMPT;
+	}
+
+	/**
 	 * Get the retry prompt when invalid terms are found.
 	 *
 	 * @param array<string> $invalid_terms Invalid terms.
@@ -443,6 +605,92 @@ The following terms you suggested do not exist in the provided vocabulary: {$ter
 Do NOT hallucinate or invent terms. You must ONLY select from the exact terms I provided in the vocabulary list.
 
 Please try again. Review the vocabulary carefully and select only terms that actually exist. Return your corrected response in the same JSON format.
+PROMPT;
+	}
+
+	/**
+	 * Get the system prompt for audit mode.
+	 *
+	 * In audit mode, the LLM can suggest new terms that should exist in the vocabulary.
+	 *
+	 * @return string
+	 */
+	private function getAuditSystemPrompt(): string {
+		return <<<'PROMPT'
+You are a taxonomy classification assistant for a WordPress content management system. Your job is to:
+1. Assign relevant taxonomy terms from the provided vocabulary
+2. Suggest NEW terms that SHOULD exist in the vocabulary but don't
+
+CRITICAL RULES:
+
+FOR EXISTING VOCABULARY TERMS:
+- Use exact slugs from the vocabulary provided
+- Assign confidence based on relevance to content
+- Mark these with "in_vocabulary": true
+
+FOR SUGGESTED NEW TERMS:
+- Only suggest terms that fill genuine gaps in the vocabulary
+- Use kebab-case slugs (e.g., "biodiversity-loss", "carbon-sequestration")
+- Be conservative — only suggest terms that would genuinely improve the taxonomy
+- Mark these with "in_vocabulary": false
+
+CONFIDENCE SCORING:
+- 0.9-1.0: Term is an obvious, primary match for the content
+- 0.7-0.89: Term is clearly relevant but not the primary focus
+- 0.5-0.69: Term is somewhat related but marginal
+- Below 0.5: Do not include
+
+REASONING:
+- Keep reasons brief (under 15 words)
+- For existing terms: explain WHY the term matches
+- For suggested new terms: explain WHY this term should exist
+
+Your response must be valid JSON. No markdown, no explanations outside the JSON structure.
+PROMPT;
+	}
+
+	/**
+	 * Get the classification prompt for audit mode.
+	 *
+	 * @param array<string, mixed> $vocabulary Vocabulary.
+	 *
+	 * @return string
+	 */
+	private function getAuditClassificationPrompt( array $vocabulary ): string {
+		$vocab_text = $this->formatVocabulary( $vocabulary );
+
+		return <<<PROMPT
+Now classify the content using terms from this vocabulary AND suggest new terms that should exist:
+
+EXISTING VOCABULARY:
+{$vocab_text}
+
+CLASSIFICATION PROCESS (do this in order):
+
+Step 1: BENCHMARK - Identify matching terms from the vocabulary above
+Step 2: GAP ANALYSIS - Identify concepts in the content that SHOULD have a term but don't
+Step 3: For each term (existing or suggested), assign confidence and brief reason
+
+RULES:
+1. Use exact slugs for existing terms
+2. Use kebab-case for suggested new terms (e.g., "climate-adaptation", "net-zero-target")
+3. Mark existing terms with "in_vocabulary": true
+4. Mark suggested new terms with "in_vocabulary": false
+5. Maximum 5 existing terms per taxonomy
+6. Maximum 3 suggested new terms per taxonomy
+7. Only suggest new terms that genuinely fill vocabulary gaps
+
+Return JSON in this exact format:
+{
+  "classifications": {
+    "taxonomy_slug": [
+      {"term": "existing-term", "confidence": 0.95, "reason": "Brief explanation", "in_vocabulary": true},
+      {"term": "suggested-new-term", "confidence": 0.80, "reason": "Why this term should exist", "in_vocabulary": false}
+    ]
+  }
+}
+
+IMPORTANT: Be conservative with new term suggestions. Only suggest terms that represent genuine concepts missing from the vocabulary.
 PROMPT;
 	}
 
@@ -627,6 +875,66 @@ PROMPT;
 	}
 
 	/**
+	 * Validate vocabulary terms and mark in_vocabulary flag.
+	 *
+	 * This method is used in audit mode to:
+	 * - Mark terms from the vocabulary with in_vocabulary: true
+	 * - Preserve suggested new terms (in_vocabulary: false)
+	 * - Filter out terms that are neither valid nor explicitly suggested
+	 *
+	 * @param array<string, array> $classifications Classifications.
+	 * @param array<string, array> $vocabulary      Vocabulary.
+	 *
+	 * @return array<string, array>
+	 */
+	private function validateAndMarkTerms( array $classifications, array $vocabulary ): array {
+		$result = [];
+
+		foreach ( $classifications as $taxonomy => $terms ) {
+			if ( ! is_array( $terms ) ) {
+				continue;
+			}
+
+			// Get valid slugs for this taxonomy.
+			$valid_slugs = [];
+			if ( isset( $vocabulary[ $taxonomy ] ) ) {
+				$valid_slugs = array_column( $vocabulary[ $taxonomy ], 'slug' );
+			}
+
+			$result[ $taxonomy ] = [];
+
+			foreach ( $terms as $term ) {
+				$slug = $term['term'] ?? '';
+				if ( empty( $slug ) ) {
+					continue;
+				}
+
+				$is_valid_slug = in_array( $slug, $valid_slugs, true );
+				$explicit_in_vocab = $term['in_vocabulary'] ?? null;
+
+				// Accept term if:
+				// 1. It's in the vocabulary (mark as in_vocabulary: true)
+				// 2. It's explicitly marked as a suggestion (in_vocabulary: false)
+				if ( $is_valid_slug ) {
+					$term['in_vocabulary'] = true;
+					$result[ $taxonomy ][] = $term;
+				} elseif ( $explicit_in_vocab === false ) {
+					// Preserve suggested new term.
+					$term['in_vocabulary'] = false;
+					$result[ $taxonomy ][] = $term;
+				}
+				// Else: term is invalid and not explicitly suggested, skip it.
+			}
+
+			if ( empty( $result[ $taxonomy ] ) ) {
+				unset( $result[ $taxonomy ] );
+			}
+		}
+
+		return $result;
+	}
+
+	/**
 	 * Set minimum confidence threshold.
 	 *
 	 * @param float $threshold Threshold (0-1).
@@ -648,6 +956,30 @@ PROMPT;
 	public function setTwoStep( bool $enabled ): self {
 		$this->two_step = $enabled;
 		return $this;
+	}
+
+	/**
+	 * Enable or disable audit mode (gap-filling suggestions).
+	 *
+	 * When enabled, the LLM can suggest new terms that should exist
+	 * in the vocabulary but don't. These are marked with in_vocabulary: false.
+	 *
+	 * @param bool $enabled Whether to enable audit mode.
+	 *
+	 * @return self
+	 */
+	public function setAuditMode( bool $enabled ): self {
+		$this->audit_mode = $enabled;
+		return $this;
+	}
+
+	/**
+	 * Check if audit mode is enabled.
+	 *
+	 * @return bool
+	 */
+	public function isAuditMode(): bool {
+		return $this->audit_mode;
 	}
 
 	/**
@@ -692,5 +1024,45 @@ PROMPT;
 	 */
 	public function getClient(): LLMClientInterface {
 		return $this->client;
+	}
+
+	/**
+	 * Get the cost tracker.
+	 *
+	 * @return CostTracker|null
+	 */
+	public function getCostTracker(): ?CostTracker {
+		return $this->cost_tracker;
+	}
+
+	/**
+	 * Get accumulated usage statistics.
+	 *
+	 * @return array{input_tokens: int, output_tokens: int, total_tokens: int, requests: int, cost: float, cost_formatted: string}
+	 */
+	public function getUsage(): array {
+		if ( null === $this->cost_tracker ) {
+			return [
+				'input_tokens'   => 0,
+				'output_tokens'  => 0,
+				'total_tokens'   => 0,
+				'requests'       => 0,
+				'cost'           => 0.0,
+				'cost_formatted' => 'N/A',
+			];
+		}
+
+		return $this->cost_tracker->getUsage();
+	}
+
+	/**
+	 * Reset usage statistics.
+	 *
+	 * @return void
+	 */
+	public function resetUsage(): void {
+		if ( null !== $this->cost_tracker ) {
+			$this->cost_tracker->reset();
+		}
 	}
 }

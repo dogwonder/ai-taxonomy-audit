@@ -82,10 +82,47 @@ class OllamaClient implements LLMClientInterface {
 				throw new \RuntimeException( 'Failed to parse Ollama response: ' . json_last_error_msg() );
 			}
 
+			// Add usage data (Ollama provides eval_count and prompt_eval_count).
+			$data['usage'] = $this->extractUsage( $data, $messages );
+
 			return $data;
 		} catch ( GuzzleException $e ) {
 			throw new \RuntimeException( 'Ollama API request failed: ' . $e->getMessage(), 0, $e );
 		}
+	}
+
+	/**
+	 * Extract or estimate usage data from Ollama response.
+	 *
+	 * @param array<string, mixed>                        $response Response data.
+	 * @param array<array{role: string, content: string}> $messages Input messages.
+	 *
+	 * @return array{prompt_tokens: int, completion_tokens: int, total_tokens: int}
+	 */
+	private function extractUsage( array $response, array $messages ): array {
+		// Ollama may provide token counts in different fields.
+		$prompt_tokens = $response['prompt_eval_count'] ?? 0;
+		$completion_tokens = $response['eval_count'] ?? 0;
+
+		// If not provided, estimate from character count (~4 chars per token).
+		if ( 0 === $prompt_tokens ) {
+			$prompt_text = '';
+			foreach ( $messages as $msg ) {
+				$prompt_text .= $msg['content'] ?? '';
+			}
+			$prompt_tokens = (int) ceil( mb_strlen( $prompt_text ) / 4 );
+		}
+
+		if ( 0 === $completion_tokens ) {
+			$output_text = $response['message']['content'] ?? '';
+			$completion_tokens = (int) ceil( mb_strlen( $output_text ) / 4 );
+		}
+
+		return [
+			'prompt_tokens'     => $prompt_tokens,
+			'completion_tokens' => $completion_tokens,
+			'total_tokens'      => $prompt_tokens + $completion_tokens,
+		];
 	}
 
 	/**

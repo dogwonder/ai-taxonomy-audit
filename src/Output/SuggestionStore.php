@@ -159,14 +159,19 @@ class SuggestionStore {
 	/**
 	 * Generate summary statistics.
 	 *
+	 * Includes separate counts for confirmed terms (in vocabulary) and
+	 * suggested new terms (gap-filling suggestions from audit mode).
+	 *
 	 * @param array<array{post_id: int, classifications: array}> $results Results.
 	 *
-	 * @return array{total_posts: int, posts_with_suggestions: int, total_suggestions: int, by_taxonomy: array}
+	 * @return array{total_posts: int, posts_with_suggestions: int, total_suggestions: int, confirmed_terms: int, suggested_new_terms: int, by_taxonomy: array}
 	 */
 	private function generateSummary( array $results ): array {
 		$total_posts = count( $results );
 		$posts_with_suggestions = 0;
 		$total_suggestions = 0;
+		$confirmed_terms = 0;
+		$suggested_new_terms = 0;
 		$by_taxonomy = [];
 
 		foreach ( $results as $result ) {
@@ -174,13 +179,29 @@ class SuggestionStore {
 				$posts_with_suggestions++;
 
 				foreach ( $result['classifications'] as $taxonomy => $terms ) {
-					$count = count( $terms );
-					$total_suggestions += $count;
-
 					if ( ! isset( $by_taxonomy[ $taxonomy ] ) ) {
-						$by_taxonomy[ $taxonomy ] = 0;
+						$by_taxonomy[ $taxonomy ] = [
+							'total'     => 0,
+							'confirmed' => 0,
+							'suggested' => 0,
+						];
 					}
-					$by_taxonomy[ $taxonomy ] += $count;
+
+					foreach ( $terms as $term ) {
+						$total_suggestions++;
+						$by_taxonomy[ $taxonomy ]['total']++;
+
+						// Check in_vocabulary flag (default to true for backwards compat).
+						$in_vocabulary = $term['in_vocabulary'] ?? true;
+
+						if ( $in_vocabulary === false ) {
+							$suggested_new_terms++;
+							$by_taxonomy[ $taxonomy ]['suggested']++;
+						} else {
+							$confirmed_terms++;
+							$by_taxonomy[ $taxonomy ]['confirmed']++;
+						}
+					}
 				}
 			}
 		}
@@ -189,6 +210,8 @@ class SuggestionStore {
 			'total_posts'            => $total_posts,
 			'posts_with_suggestions' => $posts_with_suggestions,
 			'total_suggestions'      => $total_suggestions,
+			'confirmed_terms'        => $confirmed_terms,
+			'suggested_new_terms'    => $suggested_new_terms,
 			'by_taxonomy'            => $by_taxonomy,
 		];
 	}
