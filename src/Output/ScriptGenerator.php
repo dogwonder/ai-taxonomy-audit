@@ -171,51 +171,87 @@ class ScriptGenerator {
 			$lines[] = '';
 			$lines[] = '#';
 			$lines[] = '# ═══════════════════════════════════════════════════════════════════════════';
-			$lines[] = '# SUGGESTED NEW TERMS (require manual creation before applying)';
+			$lines[] = '# SUGGESTED NEW TERMS (require creation before applying)';
 			$lines[] = '# ═══════════════════════════════════════════════════════════════════════════';
 			$lines[] = '#';
 			$lines[] = '# The following terms were suggested by the AI but do not exist in the';
-			$lines[] = '# vocabulary. Review these suggestions and create terms if appropriate:';
+			$lines[] = '# vocabulary. Review and uncomment the commands you want to run.';
+			$lines[] = '#';
+			$lines[] = '# STEP 1: Create approved new terms (uncomment lines below)';
 			$lines[] = '#';
 
-			// Group by taxonomy.
+			// Group by taxonomy and dedupe terms.
 			$by_taxonomy = [];
+			$term_posts = []; // Track which posts need each term.
 			foreach ( $suggested_terms as $suggestion ) {
 				$taxonomy = $suggestion['taxonomy'];
+				$term = $suggestion['term'];
+				$key = $taxonomy . ':' . $term;
+
 				if ( ! isset( $by_taxonomy[ $taxonomy ] ) ) {
 					$by_taxonomy[ $taxonomy ] = [];
 				}
-				$by_taxonomy[ $taxonomy ][] = $suggestion;
+
+				if ( ! isset( $by_taxonomy[ $taxonomy ][ $term ] ) ) {
+					$by_taxonomy[ $taxonomy ][ $term ] = [
+						'term'   => $term,
+						'reason' => $suggestion['reason'] ?? '',
+					];
+				}
+
+				// Track post assignments for this term.
+				if ( ! isset( $term_posts[ $key ] ) ) {
+					$term_posts[ $key ] = [];
+				}
+				$term_posts[ $key ][] = $suggestion['post_id'];
 			}
 
-			foreach ( $by_taxonomy as $taxonomy => $suggestions ) {
-				$lines[] = sprintf( '# %s:', strtoupper( $taxonomy ) );
-
-				// Dedupe by term.
-				$seen = [];
-				foreach ( $suggestions as $suggestion ) {
-					$term = $suggestion['term'];
-					if ( isset( $seen[ $term ] ) ) {
-						continue;
+			// Generate term creation commands (commented out).
+			foreach ( $by_taxonomy as $taxonomy => $terms ) {
+				$lines[] = sprintf( '# --- %s ---', strtoupper( $taxonomy ) );
+				foreach ( $terms as $term_slug => $term_data ) {
+					// Generate human-readable name from slug.
+					$term_name = ucwords( str_replace( '-', ' ', $term_slug ) );
+					if ( ! empty( $term_data['reason'] ) ) {
+						$lines[] = sprintf( '# Reason: %s', $this->escapeComment( $term_data['reason'] ) );
 					}
-					$seen[ $term ] = true;
-
 					$lines[] = sprintf(
-						'#   - %s',
-						$term
+						'# %s term create %s %s --slug=%s',
+						$this->prefix,
+						escapeshellarg( $taxonomy ),
+						escapeshellarg( $term_name ),
+						escapeshellarg( $term_slug )
 					);
-					if ( ! empty( $suggestion['reason'] ) ) {
-						$lines[] = sprintf(
-							'#     Reason: %s',
-							$this->escapeComment( $suggestion['reason'] )
-						);
-					}
 				}
 				$lines[] = '#';
 			}
 
-			$lines[] = '# To create a new term:';
-			$lines[] = sprintf( '# %s term create <taxonomy> <term-slug> --slug=<term-slug>', $this->prefix );
+			$lines[] = '#';
+			$lines[] = '# STEP 2: Apply new terms to posts (uncomment after creating terms above)';
+			$lines[] = '#';
+
+			// Generate term assignment commands (commented out).
+			foreach ( $by_taxonomy as $taxonomy => $terms ) {
+				foreach ( $terms as $term_slug => $term_data ) {
+					$key = $taxonomy . ':' . $term_slug;
+					$post_ids = $term_posts[ $key ] ?? [];
+
+					if ( empty( $post_ids ) ) {
+						continue;
+					}
+
+					$lines[] = sprintf( '# Assign "%s" to %d post(s):', $term_slug, count( $post_ids ) );
+					foreach ( $post_ids as $post_id ) {
+						$lines[] = sprintf(
+							'# %s post term add %d %s %s',
+							$this->prefix,
+							$post_id,
+							escapeshellarg( $taxonomy ),
+							escapeshellarg( $term_slug )
+						);
+					}
+				}
+			}
 			$lines[] = '#';
 		}
 

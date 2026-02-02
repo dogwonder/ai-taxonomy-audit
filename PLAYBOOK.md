@@ -192,10 +192,34 @@ Output includes:
 
 **Audit mode workflow:**
 
-1. Run audit classification
-2. Review suggested new terms in the CSV/JSON output
-3. Manually create approved new terms: `wp term create <taxonomy> <term-slug>`
-4. Re-run classification to apply the new terms
+1. Run audit classification with `--audit` flag
+2. Review the output (CSV or generated script)
+3. The generated script includes:
+   - **STEP 1**: Commented-out `wp term create` commands for suggested new terms
+   - **STEP 2**: Commented-out `wp post term add` commands to assign terms to posts
+4. Uncomment and run the term creation commands you approve
+5. Uncomment and run the term assignment commands
+
+**Example generated script output:**
+
+```bash
+# ═══════════════════════════════════════════════════════════════════════════
+# SUGGESTED NEW TERMS (require creation before applying)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# STEP 1: Create approved new terms (uncomment lines below)
+#
+# --- CLIMATE-OR-NATURE-OUTCOME ---
+# Reason: Content discusses biodiversity decline impacts
+# wp term create 'climate-or-nature-outcome' 'Biodiversity Loss' --slug='biodiversity-loss'
+#
+# STEP 2: Apply new terms to posts (uncomment after creating terms above)
+#
+# Assign "biodiversity-loss" to 3 post(s):
+# wp post term add 123 'climate-or-nature-outcome' 'biodiversity-loss'
+# wp post term add 456 'climate-or-nature-outcome' 'biodiversity-loss'
+# wp post term add 789 'climate-or-nature-outcome' 'biodiversity-loss'
+```
 
 ---
 
@@ -539,7 +563,7 @@ wp wptofile-graph validate-check
 ## Related Documentation
 
 - `README.md` — Full command reference
-- `wp-to-file-graph/GOINGMETA-INTEGRATION.md` — Knowledge graph integration plan (includes future SKOS/SHACL enhancements)
+- `wp-to-file-graph/PLAN.md` — Development plan with GoingMeta integration and future enhancements
 - `wp-to-file-graph/README.md` — Graph export documentation
 
 #ai #content #taxonomy #semantic-web
