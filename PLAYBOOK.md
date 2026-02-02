@@ -14,6 +14,115 @@ This pipeline:
 
 ---
 
+## Pipeline Architecture
+
+The complete knowledge graph maintenance pipeline:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        KNOWLEDGE GRAPH BEDROCK                               │
+│                                                                              │
+│  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐      │
+│  │    WordPress     │    │  wp-to-file-graph │    │    Output        │      │
+│  │    (Source)      │───▶│  (Transform)      │───▶│    (Artifacts)   │      │
+│  ├──────────────────┤    ├──────────────────┤    ├──────────────────┤      │
+│  │ • Posts/CPTs     │    │ • SchemaDiscovery │    │ • schema.json    │      │
+│  │ • Taxonomies     │    │ • VocabularyGen   │    │ • ontology.ttl   │      │
+│  │ • ACF Fields     │    │ • SKOSProcessor   │    │ • taxonomies.skos│      │
+│  │ • Relationships  │    │ • RDFProcessor    │    │ • content.ttl    │      │
+│  └──────────────────┘    │ • SHACLShapeGen   │    │ • shapes.ttl     │      │
+│                          └──────────────────┘    └──────────────────┘      │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        VALIDATION LAYER                                      │
+│                                                                              │
+│  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐      │
+│  │  SHACL Validate  │    │   Validation     │    │    Action        │      │
+│  │  (Quality Gate)  │───▶│   Report         │───▶│    Required?     │      │
+│  ├──────────────────┤    ├──────────────────┤    ├──────────────────┤      │
+│  │ • shapes.ttl     │    │ • Conformant ✓   │    │ • Fix content    │      │
+│  │ • content.ttl    │    │ • Violations ✗   │    │ • Adjust shapes  │      │
+│  │ • pyshacl/Jena   │    │ • Missing fields │    │ • Add taxonomies │      │
+│  └──────────────────┘    └──────────────────┘    └────────┬─────────┘      │
+└─────────────────────────────────────────────────────────────│───────────────┘
+                                                              │
+                                                              ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        AUDIT & IMPROVEMENT LOOP                              │
+│                                                                              │
+│  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐      │
+│  │ ai-taxonomy-audit│    │   Human Review   │    │   Apply Changes  │      │
+│  │ (Classification) │───▶│   (Quality Ctrl) │───▶│   (WordPress)    │      │
+│  ├──────────────────┤    ├──────────────────┤    ├──────────────────┤      │
+│  │ • Benchmark mode │    │ • CSV review     │    │ • wp term create │      │
+│  │ • Audit mode     │    │ • Approve/reject │    │ • wp post term   │      │
+│  │ • Gap analysis   │    │ • Create terms   │    │   add            │      │
+│  │ • Suggestions    │    │ • Edit content   │    │ • Content edits  │      │
+│  └──────────────────┘    └──────────────────┘    └────────┬─────────┘      │
+└─────────────────────────────────────────────────────────────│───────────────┘
+                                                              │
+                                              ┌───────────────┘
+                                              ▼
+                              ┌───────────────────────────────┐
+                              │      LOOP BACK TO EXPORT      │
+                              │   (Re-export, re-validate)    │
+                              └───────────────────────────────┘
+```
+
+### Workflow Summary
+
+| Phase | Tool | Input | Output | Human Touch |
+|-------|------|-------|--------|-------------|
+| **1. Discover** | `wp wptofile-graph discover` | WordPress | `schema.json` | Review structure |
+| **2. Vocabulary** | `wp wptofile-graph vocab` | schema.json | `ontology.ttl` | Review classes |
+| **3. Taxonomies** | `wp wptofile-graph skos_multiple` | schema.json | `taxonomies.skos.ttl` | Review hierarchy |
+| **4. Shapes** | `wp wptofile-graph shapes` | schema.json | `shapes.ttl` | Define constraints |
+| **5. Export** | `wp wptofile rdf` | WordPress | `content/*.ttl` | — |
+| **6. Validate** | `wp wptofile-graph validate` | content + shapes | Report | Fix violations |
+| **7. Classify** | `wp taxonomy-audit classify` | content + vocab | Suggestions | — |
+| **8. Audit** | `wp taxonomy-audit classify --audit` | content + vocab | Gaps + new terms | Review suggestions |
+| **9. Apply** | `wp taxonomy-audit apply` | Approved CSV | WordPress updated | Approve changes |
+| **10. Loop** | → Back to Step 5 | — | — | — |
+
+### The Continuous Improvement Loop
+
+```mermaid
+flowchart TB
+    subgraph "FOUNDATION (One-time setup)"
+        A[Discover Schema] --> B[Generate Ontology]
+        B --> C[Export SKOS Taxonomies]
+        C --> D[Generate SHACL Shapes]
+    end
+
+    subgraph "EXPORT CYCLE (Repeatable)"
+        E[Export Content as RDF]
+        E --> F{SHACL Valid?}
+        F -->|No| G[Fix Violations]
+        G --> E
+        F -->|Yes| H[Content Ready]
+    end
+
+    subgraph "AUDIT CYCLE (Periodic)"
+        I[Classify Content]
+        I --> J[Gap Analysis]
+        J --> K{Gaps Found?}
+        K -->|Yes| L[Audit Mode]
+        L --> M[Review Suggestions]
+        M --> N[Create/Apply Terms]
+        N --> O[WordPress Updated]
+        K -->|No| P[Taxonomy Healthy]
+    end
+
+    D --> E
+    H --> I
+    O --> E
+    P --> Q[Schedule Next Audit]
+```
+
+---
+
 ## Prerequisites
 
 - WP-CLI installed and configured
