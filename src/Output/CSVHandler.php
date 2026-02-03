@@ -36,9 +36,9 @@ class CSVHandler {
 	/**
 	 * Status constants for comparison.
 	 */
-	private const STATUS_CONFIRM = 'CONFIRM';  // Term already applied and LLM agrees.
-	private const STATUS_ADD     = 'ADD';      // Term not applied, LLM suggests adding.
-	private const STATUS_NEW     = 'NEW';      // Term doesn't exist in vocabulary (audit mode).
+	private const STATUS_KEEP = 'KEEP';  // Term already applied and LLM agrees — no action needed.
+	private const STATUS_ADD  = 'ADD';   // Term not applied, LLM suggests adding.
+	private const STATUS_NEW  = 'NEW';   // Term doesn't exist in vocabulary (audit mode).
 
 	/**
 	 * Export classification results to CSV.
@@ -121,7 +121,7 @@ class CSVHandler {
 	 * @param array       $existing_terms    Existing terms for this taxonomy on this post.
 	 * @param bool|null   $in_vocabulary     Whether term exists in vocabulary (null = unknown/benchmark mode).
 	 *
-	 * @return string Status: CONFIRM, ADD, or NEW.
+	 * @return string Status: KEEP, ADD, or NEW.
 	 */
 	private function calculateStatus( string $term_slug, array $existing_terms, ?bool $in_vocabulary ): string {
 		// If explicitly marked as not in vocabulary, it's a new term suggestion.
@@ -131,7 +131,7 @@ class CSVHandler {
 
 		// Check if term is already applied to this post.
 		if ( in_array( $term_slug, $existing_terms, true ) ) {
-			return self::STATUS_CONFIRM;
+			return self::STATUS_KEEP;
 		}
 
 		// Term exists in vocabulary but not applied to post.

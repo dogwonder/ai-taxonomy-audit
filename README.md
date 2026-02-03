@@ -32,7 +32,7 @@ When auditing taxonomy health, there are three distinct questions to answer:
 
 The LLM reviews the content and either **confirms** the existing term is appropriate or suggests it may not belong. In the CSV output, this is indicated by the `status` column:
 
-- `CONFIRM` — Term is already applied AND the LLM agrees it should be
+- `KEEP` — Term is already applied AND the LLM agrees it should be
 
 ### Dimension 2: What Terms Should Be Added?
 
@@ -69,7 +69,7 @@ wp taxonomy-audit classify \
     --limit=50 \
     --save-run
 
-# 2. Review the CSV — check CONFIRM vs ADD status
+# 2. Review the CSV — check KEEP vs ADD status
 
 # 3. Run AUDIT mode to discover vocabulary gaps
 wp taxonomy-audit classify \
@@ -660,7 +660,7 @@ Open the CSV in a spreadsheet application. The columns are:
 
 | Status | Meaning | Action |
 |--------|---------|--------|
-| `CONFIRM` | Term already applied, LLM agrees | No action needed (validates existing) |
+| `KEEP` | Term already applied, LLM agrees | No action needed (validates existing) |
 | `ADD` | Term exists in vocab, should be added | Apply the term to post |
 | `NEW` | Term doesn't exist (audit mode only) | Create term first, then apply |
 
@@ -669,16 +669,16 @@ Open the CSV in a spreadsheet application. The columns are:
 ```csv
 post_id,post_title,post_url,taxonomy,existing_terms,suggested_term,confidence,reason,status,in_vocabulary,approved
 2007,"Climate Clause",https://...,climate-or-nature-outcome,"climate-risk",decarbonisation,0.95,"Focus on emission reduction",ADD,TRUE,
-2007,"Climate Clause",https://...,climate-or-nature-outcome,"climate-risk",climate-risk,0.90,"Risk assessment mentioned",CONFIRM,TRUE,
+2007,"Climate Clause",https://...,climate-or-nature-outcome,"climate-risk",climate-risk,0.90,"Risk assessment mentioned",KEEP,TRUE,
 2007,"Climate Clause",https://...,climate-or-nature-outcome,"climate-risk",carbon-accounting,0.85,"Financial carbon tracking",NEW,FALSE,
 ```
 
 In this example:
-- `climate-risk` is confirmed as correctly applied (CONFIRM)
+- `climate-risk` is confirmed as correctly applied (KEEP)
 - `decarbonisation` should be added from existing vocabulary (ADD)
 - `carbon-accounting` is a suggested new term to create (NEW)
 
-**Note:** When applying suggestions, only terms with `status: ADD` or `status: CONFIRM` will work directly. Suggested new terms (`status: NEW`) must be created first using `wp term create <taxonomy> <term-slug>`.
+**Note:** When applying suggestions, only terms with `status: ADD` or `status: KEEP` will work directly. Suggested new terms (`status: NEW`) must be created first using `wp term create <taxonomy> <term-slug>`.
 
 ### 6. Analyze Taxonomy Gaps
 

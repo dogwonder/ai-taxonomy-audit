@@ -298,7 +298,7 @@ When auditing taxonomies, the tool answers three distinct questions:
 
 | Dimension | Question | CSV Status | Mode Required |
 |-----------|----------|------------|---------------|
-| **1. Correctness** | Are existing terms correctly applied? | `CONFIRM` | Both |
+| **1. Correctness** | Are existing terms correctly applied? | `KEEP` | Both |
 | **2. Completeness** | What existing terms should be added? | `ADD` | Both |
 | **3. Vocabulary Gaps** | What new terms should be created? | `NEW` | Audit only |
 
@@ -308,7 +308,7 @@ The CSV output includes a `status` column that tells you exactly what action is 
 
 | Status | Meaning | Action Required |
 |--------|---------|-----------------|
-| `CONFIRM` | Term already applied, LLM agrees | None (validates existing) |
+| `KEEP` | Term already applied, LLM agrees | None (validates existing) |
 | `ADD` | Term exists in vocab, should be added | Apply the term |
 | `NEW` | Term doesn't exist in vocabulary | Create term first, then apply |
 
@@ -316,7 +316,7 @@ The CSV output includes a `status` column that tells you exactly what action is 
 
 ```csv
 post_id,existing_terms,suggested_term,confidence,status,in_vocabulary
-2007,"climate-risk",climate-risk,0.90,CONFIRM,TRUE
+2007,"climate-risk",climate-risk,0.90,KEEP,TRUE
 2007,"climate-risk",decarbonisation,0.95,ADD,TRUE
 2007,"climate-risk",carbon-accounting,0.85,NEW,FALSE
 ```
@@ -346,7 +346,7 @@ Use when you want to validate existing classifications and find missing terms fr
 wp taxonomy-audit classify --post_type=post --limit=20 --provider=openai
 ```
 
-Output includes `CONFIRM` and `ADD` status values. Terms not in vocabulary are rejected.
+Output includes `KEEP` and `ADD` status values. Terms not in vocabulary are rejected.
 
 ### Audit Mode
 
@@ -357,7 +357,7 @@ wp taxonomy-audit classify --audit --post_type=post --limit=20 --provider=openai
 ```
 
 Output includes all three status values:
-- `CONFIRM` — existing terms the LLM agrees with
+- `KEEP` — existing terms the LLM agrees with
 - `ADD` — existing vocabulary terms that should be applied
 - `NEW` — suggested terms that don't exist yet (`in_vocabulary: FALSE`)
 
@@ -406,7 +406,7 @@ wp taxonomy-audit classify \
     --limit=3 \
     --taxonomies=jurisdiction,climate-or-nature-outcome \
     --provider=ollama \
-    --model=qwen2.5:14b \
+    --model=qwen2.5:latest \
     --format=json \
     --dry-run
 ```
@@ -419,7 +419,7 @@ wp taxonomy-audit classify \
     --limit=20 \
     --taxonomies=jurisdiction,climate-or-nature-outcome \
     --provider=ollama \
-    --model=qwen2.5:14b \
+    --model=qwen2.5:latest \
     --format=json \
     --min-confidence=0.7 \
     --save-run \
@@ -496,7 +496,26 @@ The SKOS file provides the LLM with:
 - SKOS definitions (often richer than WP descriptions)
 - Visual hierarchy in the prompt (indented child terms)
 
-#### 4.3 Run Gap Analysis
+#### 4.3 Audit Mode (Discover Vocabulary Gaps)
+
+After reviewing benchmark results, run audit mode to discover what terms are missing from your vocabulary:
+
+```bash
+wp taxonomy-audit classify \
+    --post_type=clause \
+    --post-ids=2007,2043,6711 \
+    --taxonomies=jurisdiction,climate-or-nature-outcome \
+    --skos-context=vocab/taxonomies.skos.ttl \
+    --provider=ollama \
+    --model=qwen2.5:latest \
+    --audit \
+    --save-run \
+    --run-notes="Audit mode - looking for vocabulary gaps"
+```
+
+The `--audit` flag tells the LLM to also suggest terms that **should exist** but don't. Look for rows with `status: NEW` — these are vocabulary gap suggestions.
+
+#### 4.4 Run Gap Analysis
 
 ```bash
 wp taxonomy-audit gap-analysis \
@@ -507,9 +526,9 @@ wp taxonomy-audit gap-analysis \
 
 Output includes:
 - **Suggested new terms** — terms the LLM thinks should exist
-- **Unused existing terms** — terms never suggested
-- **Ambiguous terms** — low average confidence
-- **Health score** — overall taxonomy fitness
+- **Unused existing terms** — terms never suggested (pruning candidates)
+- **Ambiguous terms** — low average confidence (may need clearer definitions)
+- **Health score** — overall taxonomy fitness (0-100)
 
 ---
 
@@ -529,7 +548,7 @@ Open the CSV in a spreadsheet:
 | `suggested_term` | LLM's suggested term slug |
 | `confidence` | Confidence score (0-1) |
 | `reason` | LLM's reasoning |
-| `status` | `CONFIRM`, `ADD`, or `NEW` (see below) |
+| `status` | `KEEP`, `ADD`, or `NEW` (see below) |
 | `in_vocabulary` | `TRUE` if term exists, `FALSE` if suggested new term |
 | `approved` | Mark `TRUE` to approve |
 
@@ -537,17 +556,17 @@ Open the CSV in a spreadsheet:
 
 | Status | What It Means | Your Action |
 |--------|---------------|-------------|
-| `CONFIRM` | Term already applied, LLM agrees it's correct | No action (validates existing classification) |
+| `KEEP` | Term already applied, LLM agrees it's correct | No action (validates existing classification) |
 | `ADD` | Term exists in vocab, LLM says add it | Apply the term to the post |
 | `NEW` | Term doesn't exist (audit mode) | Create term first, then apply |
 
 **Workflow by Status:**
 
-1. **Filter by `CONFIRM`** — Review these to validate your existing classifications are correct
+1. **Filter by `KEEP`** — Review these to validate your existing classifications are correct
 2. **Filter by `ADD`** — These are actionable: terms to apply from your existing vocabulary
 3. **Filter by `NEW`** — These require vocabulary decisions: should you create these terms?
 
-**Note:** Only `ADD` and `CONFIRM` terms can be directly applied. `NEW` terms must be created first with `wp term create <taxonomy> <term-slug>`.
+**Note:** Only `ADD` and `KEEP` terms can be directly applied. `NEW` terms must be created first with `wp term create <taxonomy> <term-slug>`.
 
 #### 5.2 Dry Run Application
 
@@ -599,7 +618,7 @@ wp wptofile rdf --file_type=ttl --post_type=clause --output=export/rdf
 wp wptofile-graph validate-check
 
 # Validate exported RDF
-wp wptofile-graph validate export/rdf/ --shapes=vocab/shapes.ttl
+wp wptofile-graph validate wp-content/export/rdf/ --shapes=vocab/shapes.ttl
 ```
 
 **Example output:**
@@ -736,7 +755,7 @@ wp taxonomy-audit runs-compare <run-a> <run-b>
 ollama serve
 
 # Pull required model
-ollama pull qwen2.5:14b
+ollama pull qwen2.5:latest
 ```
 
 ### OpenAI API Key Not Set
@@ -769,7 +788,7 @@ wp wptofile-graph validate-check
 
 | Provider | Model | Quality | Speed | Cost |
 |----------|-------|---------|-------|------|
-| Ollama | qwen2.5:14b | Good | Medium | Free (local) |
+| Ollama | qwen2.5:latest | Good | Medium | Free (local) |
 | Ollama | gemma3:27b | Better | Slow | Free (local) |
 | OpenAI | gpt-4o-mini | High | Fast | ~$0.15/1M tokens |
 | OpenAI | gpt-4o | Highest | Medium | ~$2.50/1M tokens |

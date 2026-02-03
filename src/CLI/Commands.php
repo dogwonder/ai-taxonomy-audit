@@ -146,7 +146,7 @@ class Commands {
 	 *
 	 *     wp taxonomy-audit classify --post_type=post --limit=10 --format=csv
 	 *     wp taxonomy-audit classify --post-ids=123,456,789
-	 *     wp taxonomy-audit classify --taxonomies=topic,category --model=qwen2.5:14b
+	 *     wp taxonomy-audit classify --taxonomies=topic,category --model=qwen2.5:latest
 	 *     wp taxonomy-audit classify --provider=openai --model=gpt-4o-mini --limit=5
 	 *     wp taxonomy-audit classify --limit=20 --sampling=stratified
 	 *
