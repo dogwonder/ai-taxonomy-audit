@@ -137,14 +137,10 @@ class Commands {
 	 * : Optional notes to attach to the run (requires --save-run).
 	 *
 	 * [--audit]
-	 * : Enable audit mode to suggest new taxonomy terms that don't exist in vocabulary.
-	 * : In audit mode, the LLM will suggest both existing vocabulary terms AND new terms
-	 * : that it believes should exist. Results include an in_vocabulary flag to distinguish them.
+	 * : Enable audit mode to suggest new taxonomy terms that don't exist in vocabulary. The LLM will suggest both existing vocabulary terms AND new terms that should exist. Results include an in_vocabulary flag to distinguish them.
 	 *
 	 * [--skos-context=<file>]
-	 * : Path to SKOS Turtle file for hierarchical vocabulary context.
-	 * : Use with wp-to-file-graph SKOS export to provide the LLM with taxonomy hierarchy
-	 * : (broader/narrower relationships) and richer term definitions.
+	 * : Path to SKOS Turtle file for hierarchical vocabulary context. Use with wp-to-file-graph SKOS export to provide the LLM with taxonomy hierarchy (broader/narrower relationships) and richer term definitions.
 	 *
 	 * ## EXAMPLES
 	 *

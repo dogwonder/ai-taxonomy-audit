@@ -204,6 +204,9 @@ mkdir -p vocab
 # Export posts as JSON
 wp wptofile clause-json --post_type=clause --file_type=json --limit=100
 
+# Export maintained posts as JSON
+wp wptofile clause-json --post-ids=2007,2043,6711,2293,2023,7703,2115,2041,8799,2161,2009,2249,7589,2129,2029,2101 --post_type=clause --file_type=json
+
 # Or use a profile
 wp wptofile clause-json --profile=content-analysis
 ```
@@ -289,37 +292,74 @@ wp taxonomy-audit classify \
 
 ---
 
+## Three Dimensions of Taxonomy Audit
+
+When auditing taxonomies, the tool answers three distinct questions:
+
+| Dimension | Question | CSV Status | Mode Required |
+|-----------|----------|------------|---------------|
+| **1. Correctness** | Are existing terms correctly applied? | `CONFIRM` | Both |
+| **2. Completeness** | What existing terms should be added? | `ADD` | Both |
+| **3. Vocabulary Gaps** | What new terms should be created? | `NEW` | Audit only |
+
+### Understanding the Status Column
+
+The CSV output includes a `status` column that tells you exactly what action is needed:
+
+| Status | Meaning | Action Required |
+|--------|---------|-----------------|
+| `CONFIRM` | Term already applied, LLM agrees | None (validates existing) |
+| `ADD` | Term exists in vocab, should be added | Apply the term |
+| `NEW` | Term doesn't exist in vocabulary | Create term first, then apply |
+
+### Example CSV Output
+
+```csv
+post_id,existing_terms,suggested_term,confidence,status,in_vocabulary
+2007,"climate-risk",climate-risk,0.90,CONFIRM,TRUE
+2007,"climate-risk",decarbonisation,0.95,ADD,TRUE
+2007,"climate-risk",carbon-accounting,0.85,NEW,FALSE
+```
+
+This tells you:
+- `climate-risk` is correctly applied ✓
+- `decarbonisation` should be added (exists in vocab)
+- `carbon-accounting` is a vocabulary gap (create it first)
+
+---
+
 ## Classification Modes
 
 The classifier supports two modes with optional SKOS enhancement:
 
-| Mode | Flag | Behaviour |
-|------|------|-----------|
-| **Benchmark** | *(default)* | Validates content against existing vocabulary only. Terms not in vocabulary are rejected. |
-| **Audit** | `--audit` | Benchmark + suggests new terms that should exist in the vocabulary. |
-| **+ SKOS Context** | `--skos-context=<file>` | Enhances either mode with hierarchical vocabulary from SKOS Turtle file. |
+| Mode | Flag | Dimensions Covered |
+|------|------|-------------------|
+| **Benchmark** | *(default)* | 1 (Correctness) + 2 (Completeness) |
+| **Audit** | `--audit` | 1 + 2 + 3 (Vocabulary Gaps) |
+| **+ SKOS Context** | `--skos-context=<file>` | Enhances either mode with hierarchical vocabulary |
 
 ### Benchmark Mode (Default)
 
-Use when you want to classify content using your existing taxonomy vocabulary:
+Use when you want to validate existing classifications and find missing terms from your current vocabulary:
 
 ```bash
 wp taxonomy-audit classify --post_type=post --limit=20 --provider=openai
 ```
 
-Output only includes terms that exist in your vocabulary.
+Output includes `CONFIRM` and `ADD` status values. Terms not in vocabulary are rejected.
 
 ### Audit Mode
 
-Use when you want to discover gaps in your vocabulary:
+Use when you also want to discover vocabulary gaps:
 
 ```bash
 wp taxonomy-audit classify --audit --post_type=post --limit=20 --provider=openai
 ```
 
-Output includes:
-- **Confirmed terms** (`in_vocabulary: true`) — existing vocabulary terms the AI recommends
-- **Suggested terms** (`in_vocabulary: false`) — new terms the AI thinks should be added to your vocabulary
+Output includes all three status values:
+- `CONFIRM` — existing terms the LLM agrees with
+- `ADD` — existing vocabulary terms that should be applied
+- `NEW` — suggested terms that don't exist yet (`in_vocabulary: FALSE`)
 
 **Audit mode workflow:**
 
@@ -363,7 +403,7 @@ Run a smaller batch first to validate the approach.
 ```bash
 wp taxonomy-audit classify \
     --post_type=clause \
-    --limit=20 \
+    --limit=3 \
     --taxonomies=jurisdiction,climate-or-nature-outcome \
     --provider=ollama \
     --model=qwen2.5:14b \
@@ -418,6 +458,8 @@ wp taxonomy-audit classify \
 
 #### 4.2 Full Classification
 
+Use this option if your taxonomies are flat (no parent/child relationships) or very small. Otherwise use 4.2b below
+
 ```bash
 wp taxonomy-audit classify \
     --post_type=clause \
@@ -433,7 +475,7 @@ wp taxonomy-audit classify \
 
 #### 4.2b Full Classification with SKOS Context (Recommended)
 
-For better term specificity, use SKOS hierarchical context:
+For better term specificity,use SKOS hierarchical context:
 
 ```bash
 wp taxonomy-audit classify \
@@ -481,14 +523,31 @@ Open the CSV in a spreadsheet:
 |--------|-------------|
 | `post_id` | WordPress post ID |
 | `post_title` | Post title for reference |
+| `post_url` | Post URL for quick access |
 | `taxonomy` | Target taxonomy |
-| `suggested_term` | Suggested term slug |
+| `existing_terms` | Terms **currently applied** to this post |
+| `suggested_term` | LLM's suggested term slug |
 | `confidence` | Confidence score (0-1) |
 | `reason` | LLM's reasoning |
-| `in_vocabulary` | `TRUE` if term exists in vocabulary, `FALSE` if suggested new term (audit mode only) |
+| `status` | `CONFIRM`, `ADD`, or `NEW` (see below) |
+| `in_vocabulary` | `TRUE` if term exists, `FALSE` if suggested new term |
 | `approved` | Mark `TRUE` to approve |
 
-**Note:** When applying suggestions, only terms with `in_vocabulary: TRUE` (or empty) will generate WP-CLI commands. Suggested new terms (`in_vocabulary: FALSE`) must be created manually first.
+**Status Column Quick Reference:**
+
+| Status | What It Means | Your Action |
+|--------|---------------|-------------|
+| `CONFIRM` | Term already applied, LLM agrees it's correct | No action (validates existing classification) |
+| `ADD` | Term exists in vocab, LLM says add it | Apply the term to the post |
+| `NEW` | Term doesn't exist (audit mode) | Create term first, then apply |
+
+**Workflow by Status:**
+
+1. **Filter by `CONFIRM`** — Review these to validate your existing classifications are correct
+2. **Filter by `ADD`** — These are actionable: terms to apply from your existing vocabulary
+3. **Filter by `NEW`** — These require vocabulary decisions: should you create these terms?
+
+**Note:** Only `ADD` and `CONFIRM` terms can be directly applied. `NEW` terms must be created first with `wp term create <taxonomy> <term-slug>`.
 
 #### 5.2 Dry Run Application
 

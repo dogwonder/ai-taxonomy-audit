@@ -8,10 +8,12 @@ Classifies WordPress posts against controlled vocabularies and generates WP-CLI 
 
 - **Three provider options**: Ollama (local), OpenAI, or OpenRouter (access to 100+ models)
 - **Two classification modes**: Benchmark (vocabulary-only) or Audit (benchmark + gap-filling suggestions)
+- **Three analysis dimensions**: Validate existing terms, suggest additions, and identify vocabulary gaps
 - **Two-step classification**: Context-aware conversation for higher accuracy
 - **Retry logic**: Automatically corrects invalid term suggestions
 - **Confidence scoring**: Filter results by confidence threshold
 - **CSV workflow**: Export, review in spreadsheets, then apply approved changes
+- **Comparison view**: See existing terms vs suggestions side-by-side with status indicators
 - **Gap analysis**: Identify taxonomy health issues, unused terms, and coverage gaps
 - **Audit mode**: Suggest new taxonomy terms that should exist (gap-filling)
 - **Pruning tools**: Safely remove unused taxonomy terms with generated scripts
@@ -19,6 +21,71 @@ Classifies WordPress posts against controlled vocabularies and generates WP-CLI 
 - **Provider comparison**: Compare results between Ollama, OpenAI, and OpenRouter
 - **Run storage**: Track analysis runs with metadata, compare runs over time
 - **Cost tracking**: Estimate costs before running, track actual usage, compare provider pricing
+
+## Three Dimensions of Taxonomy Audit
+
+When auditing taxonomy health, there are three distinct questions to answer:
+
+### Dimension 1: Are Existing Terms Correct?
+
+> "This post has 'climate-risk' applied — is that accurate?"
+
+The LLM reviews the content and either **confirms** the existing term is appropriate or suggests it may not belong. In the CSV output, this is indicated by the `status` column:
+
+- `CONFIRM` — Term is already applied AND the LLM agrees it should be
+
+### Dimension 2: What Terms Should Be Added?
+
+> "This post should have 'decarbonisation' but doesn't"
+
+The LLM suggests terms from your existing vocabulary that should be applied but currently aren't. This is the primary output of **benchmark mode**:
+
+- `ADD` — Term exists in vocabulary, LLM suggests it, but not currently applied
+
+### Dimension 3: What Vocabulary Gaps Exist?
+
+> "There should be a term called 'carbon-accounting' but it doesn't exist"
+
+The LLM identifies concepts in the content that have no matching term in your vocabulary. This requires **audit mode** (`--audit` flag):
+
+- `NEW` — Term doesn't exist in vocabulary (suggested for creation)
+
+### Summary: Modes and Dimensions
+
+| Mode | Dimension 1 (Confirm) | Dimension 2 (Add) | Dimension 3 (New) |
+|------|----------------------|-------------------|-------------------|
+| **Benchmark** (default) | ✅ | ✅ | ❌ |
+| **Audit** (`--audit`) | ✅ | ✅ | ✅ |
+
+### Recommended Workflow
+
+```bash
+# 1. Run BENCHMARK mode first to assess vocabulary coverage
+wp taxonomy-audit classify \
+    --post_type=clause \
+    --taxonomies=climate-or-nature-outcome \
+    --skos-context=vocab/taxonomies.skos.ttl \
+    --provider=openai \
+    --limit=50 \
+    --save-run
+
+# 2. Review the CSV — check CONFIRM vs ADD status
+
+# 3. Run AUDIT mode to discover vocabulary gaps
+wp taxonomy-audit classify \
+    --post_type=clause \
+    --taxonomies=climate-or-nature-outcome \
+    --skos-context=vocab/taxonomies.skos.ttl \
+    --provider=openai \
+    --audit \
+    --limit=50 \
+    --save-run
+
+# 4. Review NEW terms — decide which to add to vocabulary
+
+# 5. Run gap-analysis for comprehensive health report
+wp taxonomy-audit gap-analysis --suggestions=output/runs/<run-id>/suggestions.json
+```
 
 ## Requirements
 
@@ -581,15 +648,37 @@ Open the CSV in a spreadsheet application. The columns are:
 | `post_title` | Post title for reference |
 | `post_url` | Post URL |
 | `taxonomy` | Target taxonomy |
-| `suggested_term` | Suggested term slug |
+| `existing_terms` | Terms **currently applied** to this post (comma-separated) |
+| `suggested_term` | LLM's suggested term slug |
 | `confidence` | Confidence score (0-1) |
 | `reason` | LLM's reasoning |
-| `in_vocabulary` | `TRUE` if term exists, `FALSE` if suggested new term (audit mode) |
+| `status` | Comparison status (see below) |
+| `in_vocabulary` | `TRUE` = exists in vocab, `FALSE` = suggested new term |
 | `approved` | Mark `TRUE` or `YES` to approve |
 
-Delete rows you don't want, or mark the `approved` column.
+**Status Column Values:**
 
-**Note:** When applying suggestions, only terms with `in_vocabulary: TRUE` (or empty) will be applied. Suggested new terms (`in_vocabulary: FALSE`) must be created manually first using `wp term create <taxonomy> <term-slug>`.
+| Status | Meaning | Action |
+|--------|---------|--------|
+| `CONFIRM` | Term already applied, LLM agrees | No action needed (validates existing) |
+| `ADD` | Term exists in vocab, should be added | Apply the term to post |
+| `NEW` | Term doesn't exist (audit mode only) | Create term first, then apply |
+
+**Example CSV row:**
+
+```csv
+post_id,post_title,post_url,taxonomy,existing_terms,suggested_term,confidence,reason,status,in_vocabulary,approved
+2007,"Climate Clause",https://...,climate-or-nature-outcome,"climate-risk",decarbonisation,0.95,"Focus on emission reduction",ADD,TRUE,
+2007,"Climate Clause",https://...,climate-or-nature-outcome,"climate-risk",climate-risk,0.90,"Risk assessment mentioned",CONFIRM,TRUE,
+2007,"Climate Clause",https://...,climate-or-nature-outcome,"climate-risk",carbon-accounting,0.85,"Financial carbon tracking",NEW,FALSE,
+```
+
+In this example:
+- `climate-risk` is confirmed as correctly applied (CONFIRM)
+- `decarbonisation` should be added from existing vocabulary (ADD)
+- `carbon-accounting` is a suggested new term to create (NEW)
+
+**Note:** When applying suggestions, only terms with `status: ADD` or `status: CONFIRM` will work directly. Suggested new terms (`status: NEW`) must be created first using `wp term create <taxonomy> <term-slug>`.
 
 ### 6. Analyze Taxonomy Gaps
 

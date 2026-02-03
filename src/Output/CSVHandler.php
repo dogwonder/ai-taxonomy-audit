@@ -24,12 +24,21 @@ class CSVHandler {
 		'post_title',
 		'post_url',
 		'taxonomy',
+		'existing_terms',
 		'suggested_term',
 		'confidence',
 		'reason',
+		'status',
 		'in_vocabulary',
 		'approved',
 	];
+
+	/**
+	 * Status constants for comparison.
+	 */
+	private const STATUS_CONFIRM = 'CONFIRM';  // Term already applied and LLM agrees.
+	private const STATUS_ADD     = 'ADD';      // Term not applied, LLM suggests adding.
+	private const STATUS_NEW     = 'NEW';      // Term doesn't exist in vocabulary (audit mode).
 
 	/**
 	 * Export classification results to CSV.
@@ -53,7 +62,12 @@ class CSVHandler {
 	/**
 	 * Flatten classification results to CSV rows.
 	 *
-	 * @param array<array{post_id: int, post_title: string, classifications: array}> $results Results.
+	 * Includes existing terms for comparison and calculates status:
+	 * - CONFIRM: Term already applied and LLM agrees
+	 * - ADD: Term not applied, LLM suggests adding from existing vocabulary
+	 * - NEW: Term doesn't exist in vocabulary (audit mode suggestion)
+	 *
+	 * @param array<array{post_id: int, post_title: string, classifications: array, existing_terms?: array}> $results Results.
 	 *
 	 * @return array<array<string>>
 	 */
@@ -65,17 +79,32 @@ class CSVHandler {
 				continue;
 			}
 
+			// Get existing terms for this post (keyed by taxonomy).
+			$existing_terms = $result['existing_terms'] ?? [];
+
 			foreach ( $result['classifications'] as $taxonomy => $terms ) {
+				// Get existing terms for this specific taxonomy.
+				$taxonomy_existing = $existing_terms[ $taxonomy ] ?? [];
+				$existing_display  = ! empty( $taxonomy_existing ) ? implode( ', ', $taxonomy_existing ) : '';
+
 				foreach ( $terms as $term ) {
+					$term_slug     = $term['term'];
+					$in_vocabulary = $term['in_vocabulary'] ?? null;
+
+					// Calculate status based on comparison.
+					$status = $this->calculateStatus( $term_slug, $taxonomy_existing, $in_vocabulary );
+
 					$rows[] = [
 						'post_id'        => (string) $result['post_id'],
 						'post_title'     => $result['post_title'],
 						'post_url'       => $result['post_url'] ?? '',
 						'taxonomy'       => $taxonomy,
-						'suggested_term' => $term['term'],
+						'existing_terms' => $existing_display,
+						'suggested_term' => $term_slug,
 						'confidence'     => (string) round( $term['confidence'], 2 ),
 						'reason'         => $term['reason'] ?? '',
-						'in_vocabulary'  => isset( $term['in_vocabulary'] ) ? ( $term['in_vocabulary'] ? 'TRUE' : 'FALSE' ) : '',
+						'status'         => $status,
+						'in_vocabulary'  => null === $in_vocabulary ? '' : ( $in_vocabulary ? 'TRUE' : 'FALSE' ),
 						'approved'       => '',
 					];
 				}
@@ -83,6 +112,30 @@ class CSVHandler {
 		}
 
 		return $rows;
+	}
+
+	/**
+	 * Calculate the status for a suggested term.
+	 *
+	 * @param string      $term_slug         The suggested term slug.
+	 * @param array       $existing_terms    Existing terms for this taxonomy on this post.
+	 * @param bool|null   $in_vocabulary     Whether term exists in vocabulary (null = unknown/benchmark mode).
+	 *
+	 * @return string Status: CONFIRM, ADD, or NEW.
+	 */
+	private function calculateStatus( string $term_slug, array $existing_terms, ?bool $in_vocabulary ): string {
+		// If explicitly marked as not in vocabulary, it's a new term suggestion.
+		if ( false === $in_vocabulary ) {
+			return self::STATUS_NEW;
+		}
+
+		// Check if term is already applied to this post.
+		if ( in_array( $term_slug, $existing_terms, true ) ) {
+			return self::STATUS_CONFIRM;
+		}
+
+		// Term exists in vocabulary but not applied to post.
+		return self::STATUS_ADD;
 	}
 
 	/**
@@ -196,13 +249,15 @@ class CSVHandler {
 			$in_vocabulary = in_array( $in_vocab_raw, [ 'true', 'yes', '1' ], true ) ? true : ( in_array( $in_vocab_raw, [ 'false', 'no', '0' ], true ) ? false : null );
 
 			$suggestions[] = [
-				'post_id'       => (int) $data['post_id'],
-				'post_title'    => $data['post_title'] ?? '',
-				'taxonomy'      => $data['taxonomy'],
-				'term'          => $data['suggested_term'],
-				'confidence'    => (float) $data['confidence'],
-				'reason'        => $data['reason'] ?? '',
-				'in_vocabulary' => $in_vocabulary,
+				'post_id'        => (int) $data['post_id'],
+				'post_title'     => $data['post_title'] ?? '',
+				'taxonomy'       => $data['taxonomy'],
+				'existing_terms' => $data['existing_terms'] ?? '',
+				'term'           => $data['suggested_term'],
+				'confidence'     => (float) $data['confidence'],
+				'reason'         => $data['reason'] ?? '',
+				'status'         => $data['status'] ?? '',
+				'in_vocabulary'  => $in_vocabulary,
 			];
 		}
 
