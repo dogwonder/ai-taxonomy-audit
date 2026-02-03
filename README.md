@@ -59,33 +59,14 @@ The LLM identifies concepts in the content that have no matching term in your vo
 
 ### Recommended Workflow
 
-```bash
-# 1. Run BENCHMARK mode first to assess vocabulary coverage
-wp taxonomy-audit classify \
-    --post_type=clause \
-    --taxonomies=climate-or-nature-outcome \
-    --skos-context=vocab/taxonomies.skos.ttl \
-    --provider=openai \
-    --limit=50 \
-    --save-run
+> **📖 See [PLAYBOOK.md](PLAYBOOK.md) for the complete step-by-step guide.**
 
-# 2. Review the CSV — check KEEP vs ADD status
-
-# 3. Run AUDIT mode to discover vocabulary gaps
-wp taxonomy-audit classify \
-    --post_type=clause \
-    --taxonomies=climate-or-nature-outcome \
-    --skos-context=vocab/taxonomies.skos.ttl \
-    --provider=openai \
-    --audit \
-    --limit=50 \
-    --save-run
-
-# 4. Review NEW terms — decide which to add to vocabulary
-
-# 5. Run gap-analysis for comprehensive health report
-wp taxonomy-audit gap-analysis --suggestions=output/runs/<run-id>/suggestions.json
-```
+**Quick overview:**
+1. Run **benchmark mode** first → assess vocabulary coverage
+2. Review CSV → check `KEEP` vs `ADD` status
+3. Run **audit mode** → discover vocabulary gaps (`NEW` terms)
+4. Run **gap-analysis** → comprehensive health report
+5. Apply approved suggestions
 
 ## Requirements
 
@@ -606,41 +587,13 @@ wp taxonomy-audit runs-delete <run-id> [--yes]
 
 ## Workflow
 
-### 1. Check Status
+> **📖 See [PLAYBOOK.md](PLAYBOOK.md) for the complete step-by-step workflow.**
+>
+> The PLAYBOOK covers: Export → Classify → Review → Gap Analysis → Apply
 
-```bash
-wp taxonomy-audit status
-```
+### CSV Output Format
 
-Verify your chosen provider is available.
-
-### 2. Review Vocabulary
-
-```bash
-wp taxonomy-audit export-vocab --taxonomies=category,post_tag --format=table
-```
-
-Ensure your taxonomies have the terms you expect.
-
-### 3. Estimate Costs (Optional)
-
-```bash
-wp taxonomy-audit classify --provider=openai --limit=50 --dry-run
-```
-
-Review the cost estimate and provider comparison before running.
-
-### 4. Classify Posts
-
-```bash
-wp taxonomy-audit classify --provider=openai --limit=50 --format=csv
-```
-
-This generates a CSV file in `output/suggestions-{timestamp}.csv` and displays usage summary.
-
-### 5. Review Suggestions
-
-Open the CSV in a spreadsheet application. The columns are:
+The classification output CSV contains:
 
 | Column | Description |
 |--------|-------------|
@@ -648,74 +601,21 @@ Open the CSV in a spreadsheet application. The columns are:
 | `post_title` | Post title for reference |
 | `post_url` | Post URL |
 | `taxonomy` | Target taxonomy |
-| `existing_terms` | Terms **currently applied** to this post (comma-separated) |
+| `existing_terms` | Terms **currently applied** to this post |
 | `suggested_term` | LLM's suggested term slug |
 | `confidence` | Confidence score (0-1) |
 | `reason` | LLM's reasoning |
-| `status` | Comparison status (see below) |
-| `in_vocabulary` | `TRUE` = exists in vocab, `FALSE` = suggested new term |
-| `approved` | Mark `TRUE` or `YES` to approve |
+| `status` | `KEEP`, `ADD`, or `NEW` (see below) |
+| `in_vocabulary` | `TRUE` = exists, `FALSE` = suggested new term |
+| `approved` | Mark `TRUE` to approve |
 
-**Status Column Values:**
+### Status Values
 
 | Status | Meaning | Action |
 |--------|---------|--------|
-| `KEEP` | Term already applied, LLM agrees | No action needed (validates existing) |
-| `ADD` | Term exists in vocab, should be added | Apply the term to post |
+| `KEEP` | Term already applied, LLM agrees | None (validates existing) |
+| `ADD` | Term exists in vocab, should be added | Apply the term |
 | `NEW` | Term doesn't exist (audit mode only) | Create term first, then apply |
-
-**Example CSV row:**
-
-```csv
-post_id,post_title,post_url,taxonomy,existing_terms,suggested_term,confidence,reason,status,in_vocabulary,approved
-2007,"Climate Clause",https://...,climate-or-nature-outcome,"climate-risk",decarbonisation,0.95,"Focus on emission reduction",ADD,TRUE,
-2007,"Climate Clause",https://...,climate-or-nature-outcome,"climate-risk",climate-risk,0.90,"Risk assessment mentioned",KEEP,TRUE,
-2007,"Climate Clause",https://...,climate-or-nature-outcome,"climate-risk",carbon-accounting,0.85,"Financial carbon tracking",NEW,FALSE,
-```
-
-In this example:
-- `climate-risk` is confirmed as correctly applied (KEEP)
-- `decarbonisation` should be added from existing vocabulary (ADD)
-- `carbon-accounting` is a suggested new term to create (NEW)
-
-**Note:** When applying suggestions, only terms with `status: ADD` or `status: KEEP` will work directly. Suggested new terms (`status: NEW`) must be created first using `wp term create <taxonomy> <term-slug>`.
-
-### 6. Analyze Taxonomy Gaps
-
-```bash
-# Run gap analysis to identify issues
-wp taxonomy-audit gap-analysis --suggestions=output/suggestions-{timestamp}.json
-```
-
-Review the report for:
-- Terms to potentially add to vocabulary
-- Unused terms to potentially prune
-- Ambiguous terms that need clarification
-- Content without adequate coverage
-
-### 7. Prune Unused Terms (Optional)
-
-```bash
-# Find terms with zero posts
-wp taxonomy-audit unused-terms
-
-# Generate safe deletion script
-wp taxonomy-audit generate-prune-script --output=prune-terms.sh
-
-# Review and run
-cat prune-terms.sh
-bash prune-terms.sh
-```
-
-### 8. Apply Approved Suggestions
-
-```bash
-# Apply only approved rows
-wp taxonomy-audit apply --file=output/suggestions.csv --approved-only
-
-# Or generate a script for manual execution
-wp taxonomy-audit generate-script --file=output/suggestions.csv --approved-only --output=apply.sh
-```
 
 ## How Classification Works
 
