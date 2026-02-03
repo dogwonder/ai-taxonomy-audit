@@ -29,8 +29,9 @@ The complete knowledge graph maintenance pipeline:
 │  │ • Posts/CPTs     │    │ • SchemaDiscovery │    │ • schema.json    │      │
 │  │ • Taxonomies     │    │ • VocabularyGen   │    │ • ontology.ttl   │      │
 │  │ • ACF Fields     │    │ • SKOSProcessor   │    │ • taxonomies.skos│      │
-│  │ • Relationships  │    │ • RDFProcessor    │    │ • content.ttl    │      │
-│  └──────────────────┘    │ • SHACLShapeGen   │    │ • shapes.ttl     │      │
+│  │ • Relationships  │    │ • RDFProcessor    │    │ • context.jsonld │      │
+│  └──────────────────┘    │ • SHACLShapeGen   │    │ • content.ttl    │      │
+│                          │ • ContextGen      │    │ • shapes.ttl     │      │
 │                          └──────────────────┘    └──────────────────┘      │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
@@ -78,14 +79,15 @@ The complete knowledge graph maintenance pipeline:
 | **1. Discover** | `wp wptofile-graph discover` | WordPress | `schema.json` | Review structure |
 | **2. Vocabulary** | `wp wptofile-graph vocab` | schema.json | `ontology.ttl` | Review classes |
 | **3. Taxonomies** | `wp wptofile-graph skos_multiple` | schema.json | `taxonomies.skos.ttl` | Review hierarchy |
-| **4. Shapes** | `wp wptofile-graph shapes` | schema.json | `shapes.ttl` | Define constraints |
-| **5. Export** | `wp wptofile rdf` | WordPress | `content/*.ttl` | — |
-| **6. Validate** | `wp wptofile-graph validate` | content + shapes | Report | Fix violations |
-| **7. Classify** | `wp taxonomy-audit classify` | content + vocab | Suggestions | — |
-| **7b. Classify (SKOS)** | `wp taxonomy-audit classify --skos-context=...` | content + SKOS vocab | Hierarchical suggestions | — |
-| **8. Audit** | `wp taxonomy-audit classify --audit` | content + vocab | Gaps + new terms | Review suggestions |
-| **9. Apply** | `wp taxonomy-audit apply` | Approved CSV | WordPress updated | Approve changes |
-| **10. Loop** | → Back to Step 5 | — | — | — |
+| **4. Context** | `wp wptofile-graph context` | ontology.ttl | `context.jsonld` | — |
+| **5. Shapes** | `wp wptofile-graph shapes` | schema.json | `shapes.ttl` | Define constraints |
+| **6. Export** | `wp wptofile rdf` | WordPress | `content/*.ttl` | — |
+| **7. Validate** | `wp wptofile-graph validate` | content + shapes | Report | Fix violations |
+| **8. Classify** | `wp taxonomy-audit classify` | content + vocab | Suggestions | — |
+| **8b. Classify (SKOS)** | `wp taxonomy-audit classify --skos-context=...` | content + SKOS vocab | Hierarchical suggestions | — |
+| **9. Audit** | `wp taxonomy-audit classify --audit` | content + vocab | Gaps + new terms | Review suggestions |
+| **10. Apply** | `wp taxonomy-audit apply` | Approved CSV | WordPress updated | Approve changes |
+| **11. Loop** | → Back to Step 6 | — | — | — |
 
 ### The Continuous Improvement Loop
 
@@ -94,7 +96,8 @@ flowchart TB
     subgraph "FOUNDATION (One-time setup)"
         A[Discover Schema] --> B[Generate Ontology]
         B --> C[Export SKOS Taxonomies]
-        C --> D[Generate SHACL Shapes]
+        C --> C2[Generate JSON-LD Context]
+        C2 --> D[Generate SHACL Shapes]
     end
 
     subgraph "EXPORT CYCLE (Repeatable)"
@@ -129,6 +132,7 @@ flowchart TB
 - WP-CLI installed and configured
 - Ollama running locally (for local LLM runs)
 - OpenAI API key configured (for production runs)
+- pyshacl installed (for SHACL validation — optional but recommended)
 
 ### Plugin Dependencies
 
@@ -265,12 +269,57 @@ wp wptofile-graph shapes \
     --output=vocab/shapes.ttl
 ```
 
-**Why these matter:**
-- **SKOS** provides hierarchies and definitions for smarter LLM classification (use with `--skos-context`)
-- **SHACL** validates that exported content meets quality constraints
-- **OWL** documents your content model for AI agents
+#### 2.4 Generate JSON-LD Context
 
-#### 2.4 Use SKOS for Enhanced Classification
+The JSON-LD context file maps your `tclp:` prefixed terms to full IRIs, enabling JSON-LD consumers to expand and validate your structured data.
+
+```bash
+wp wptofile-graph context \
+    --ontology=vocab/ontology.ttl \
+    --namespace=https://chancerylaneproject.org/vocab/ \
+    --prefix=tclp \
+    --output=vocab/context.jsonld
+```
+
+Or create manually based on your ontology:
+
+```json
+{
+    "@context": {
+        "@vocab": "http://schema.org/",
+        "tclp": "https://chancerylaneproject.org/vocab/",
+        "skos": "http://www.w3.org/2004/02/skos/core#",
+        "tclp:documentType": {"@type": "@id"},
+        "tclp:climateOutcome": {"@type": "@id", "@container": "@set"},
+        "tclp:climateSolution": {"@type": "@id", "@container": "@set"},
+        "tclp:jurisdiction": {"@type": "@id"},
+        "tclp:practiceArea": {"@type": "@id"},
+        "tclp:contentType": {"@type": "@id"},
+        "tclp:maintenanceStatus": {"@type": "@id"},
+        "tclp:contractLifecycleStage": {"@type": "@id"},
+        "tclp:directionOfObligation": {"@type": "@id"},
+        "tclp:principle": {"@type": "@id"},
+        "tclp:relatedStandard": {"@type": "@id", "@container": "@set"},
+        "tclp:lastReviewedDate": {"@type": "http://www.w3.org/2001/XMLSchema#date"}
+    }
+}
+```
+
+**Why `context.jsonld` matters:**
+- Your HTML pages embed JSON-LD with `@context` pointing to this file
+- Without it, `tclp:climateOutcome` is an opaque string, not a resolvable IRI
+- Enables conversion of JSON-LD → RDF for SHACL validation
+- Ensures semantic interoperability with other linked data consumers
+
+**Host at:** `https://chancerylaneproject.org/vocab/context.jsonld`
+
+**Why these matter:**
+- **OWL** documents your content model for AI agents
+- **SKOS** provides hierarchies and definitions for smarter LLM classification (use with `--skos-context`)
+- **JSON-LD Context** maps prefixed terms to full IRIs for structured data consumers
+- **SHACL** validates that exported content meets quality constraints
+
+#### 2.5 Use SKOS for Enhanced Classification
 
 Once you have SKOS taxonomies exported, use them to give the LLM hierarchical context:
 
@@ -768,13 +817,22 @@ define('OPENAI_API_KEY', 'sk-...');
 
 ### SHACL Validator Not Found
 
+pyshacl is the recommended SHACL validator — lightweight and fully compliant.
+
 ```bash
-# Install pyshacl
+# For ddev environments (Debian-based containers)
+ddev exec "sudo apt-get update && sudo apt-get install -y python3-pip"
+ddev exec "pip3 install --break-system-packages pyshacl"
+
+# For local/native environments
 pip install pyshacl
 
 # Verify
-wp wptofile-graph validate-check
+ddev wp wptofile-graph validate_check
+# or: wp wptofile-graph validate_check
 ```
+
+**Note:** The validator automatically checks common pip install locations including `~/.local/bin/pyshacl`.
 
 ### Low Classification Confidence
 
