@@ -260,7 +260,10 @@ wp wptofile-graph vocab \
 
 **Unified vocabulary config format (`vocab/tclp-vocabulary.json`):**
 
-This file is the single source of truth for both the PHP JSON-LD generator and the vocab pipeline.
+This file is the single source of truth for vocabulary configuration, used by:
+- The `generateHead` command for frontend JSON-LD output
+- The vocab pipeline for ontology generation
+- The jsonld command for CLI exports
 
 ```json
 {
@@ -366,7 +369,36 @@ Or create manually based on your ontology:
 - **JSON-LD Context** maps prefixed terms to full IRIs for structured data consumers
 - **SHACL** validates that exported content meets quality constraints
 
-#### 2.5 Use SKOS for Enhanced Classification
+#### 2.5 Generate Frontend JSON-LD (Optional)
+
+To output JSON-LD in your site's `<head>` for search engines and AI agents, generate a standalone PHP file:
+
+```bash
+# Generate self-contained PHP file for wp_head
+wp wptofile-graph generateHead --output=wp-content/mu-plugins/tclp-jsonld-head.php
+
+# Preview first
+wp wptofile-graph generateHead
+
+# Custom options
+wp wptofile-graph generateHead \
+  --class-name=TCLP_JSONLD_Head \
+  --post-types=clause,guide \
+  --context-url=https://example.org/vocab/context.jsonld \
+  --output=mu-plugins/tclp-jsonld-head.php
+```
+
+**Key features:**
+- **Self-contained** — No runtime dependencies on wp-to-file-graph
+- **Config baked in** — Vocabulary mappings and computed fields embedded
+- **Regenerable** — Re-run when config changes
+
+**When to regenerate:**
+- After updating `vocab/tclp-vocabulary.json`
+- After adding computed fields to `export-profiles.yaml`
+- After adding new taxonomies
+
+#### 2.6 Use SKOS for Enhanced Classification
 
 Once you have SKOS taxonomies exported, use them to give the LLM hierarchical context:
 
@@ -802,6 +834,9 @@ wp wptofile-graph shapes --schema=schema.json --output=shapes.ttl
 
 # Validate RDF
 wp wptofile-graph validate export/rdf/ --shapes=shapes.ttl
+
+# Generate frontend JSON-LD for wp_head
+wp wptofile-graph generateHead --output=mu-plugins/tclp-jsonld-head.php
 ```
 
 ### Classification Commands (ai-taxonomy-audit)
