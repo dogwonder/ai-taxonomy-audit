@@ -264,7 +264,7 @@ This file is the single source of truth for both the PHP JSON-LD generator and t
 
 ```json
 {
-    "namespace": "https://chancerylaneproject.org/vocab/",
+    "namespace": "https://example.org/vocab/",
     "prefix": "tclp",
     "taxonomy_mappings": {
         "climate-or-nature-outcome": {
@@ -313,7 +313,7 @@ The JSON-LD context file maps your `tclp:` prefixed terms to full IRIs, enabling
 # Basic generation (from ontology only)
 wp wptofile-graph context \
     --ontology=vocab/ontology.ttl \
-    --namespace=https://chancerylaneproject.org/vocab/ \
+    --namespace=https://example.org/vocab/ \
     --prefix=tclp \
     --output=vocab/context.jsonld
 
@@ -321,7 +321,7 @@ wp wptofile-graph context \
 wp wptofile-graph context \
     --ontology=vocab/ontology.ttl \
     --property-map=vocab/tclp-vocabulary.json \
-    --namespace=https://chancerylaneproject.org/vocab/ \
+    --namespace=https://example.org/vocab/ \
     --prefix=tclp \
     --output=vocab/context.jsonld
 ```
@@ -334,7 +334,7 @@ Or create manually based on your ontology:
 {
     "@context": {
         "@vocab": "http://schema.org/",
-        "tclp": "https://chancerylaneproject.org/vocab/",
+        "tclp": "https://example.org/vocab/",
         "skos": "http://www.w3.org/2004/02/skos/core#",
         "tclp:documentType": {"@type": "@id"},
         "tclp:climateOutcome": {"@type": "@id", "@container": "@set"},
@@ -358,7 +358,7 @@ Or create manually based on your ontology:
 - Enables conversion of JSON-LD → RDF for SHACL validation
 - Ensures semantic interoperability with other linked data consumers
 
-**Host at:** `https://chancerylaneproject.org/vocab/context.jsonld`
+**Host at:** `https://example.org/vocab/context.jsonld`
 
 **Why these matter:**
 - **OWL** documents your content model for AI agents
