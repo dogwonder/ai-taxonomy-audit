@@ -240,12 +240,48 @@ Generate semantic web vocabularies for richer LLM context and validation.
 #### 2.1 Generate OWL Ontology
 
 ```bash
+# Basic generation (auto-generates property names from taxonomy slugs)
 wp wptofile-graph vocab \
     --schema=vocab/schema.json \
     --namespace=https://example.org/vocab/ \
     --prefix=vocab \
     --title="Content Vocabulary" \
     --output=vocab/ontology.ttl
+
+# With vocabulary config (cleaner names + extra properties)
+wp wptofile-graph vocab \
+    --schema=vocab/schema.json \
+    --property-map=vocab/tclp-vocabulary.json \
+    --namespace=https://example.org/vocab/ \
+    --prefix=vocab \
+    --title="Content Vocabulary" \
+    --output=vocab/ontology.ttl
+```
+
+**Unified vocabulary config format (`vocab/tclp-vocabulary.json`):**
+
+This file is the single source of truth for both the PHP JSON-LD generator and the vocab pipeline.
+
+```json
+{
+    "namespace": "https://chancerylaneproject.org/vocab/",
+    "prefix": "tclp",
+    "taxonomy_mappings": {
+        "climate-or-nature-outcome": {
+            "property": "climateOutcome",
+            "label": "Climate or nature outcome",
+            "multi_valued": true,
+            "post_types": ["clause", "guide"]
+        }
+    },
+    "extra_properties": {
+        "documentType": {
+            "label": "Document type",
+            "type": "datatype",
+            "range": "xsd:string"
+        }
+    }
+}
 ```
 
 #### 2.2 Export Taxonomies as SKOS
@@ -274,12 +310,23 @@ wp wptofile-graph shapes \
 The JSON-LD context file maps your `tclp:` prefixed terms to full IRIs, enabling JSON-LD consumers to expand and validate your structured data.
 
 ```bash
+# Basic generation (from ontology only)
 wp wptofile-graph context \
     --ontology=vocab/ontology.ttl \
     --namespace=https://chancerylaneproject.org/vocab/ \
     --prefix=tclp \
     --output=vocab/context.jsonld
+
+# With vocabulary config (adds @container: @set for multi-valued, XSD types)
+wp wptofile-graph context \
+    --ontology=vocab/ontology.ttl \
+    --property-map=vocab/tclp-vocabulary.json \
+    --namespace=https://chancerylaneproject.org/vocab/ \
+    --prefix=tclp \
+    --output=vocab/context.jsonld
 ```
+
+The vocabulary config's `taxonomy_mappings[].multi_valued` flags control which properties get `@container: @set`. XSD types are automatically extracted from ontology `rdfs:range`.
 
 Or create manually based on your ontology:
 
@@ -741,11 +788,14 @@ cat prune-terms.sh
 # Discover schema
 wp wptofile-graph discover <post-types> --format=json --output=schema.json
 
-# Generate OWL ontology
-wp wptofile-graph vocab --schema=schema.json --output=ontology.ttl
+# Generate OWL ontology (with vocabulary config)
+wp wptofile-graph vocab --schema=schema.json --property-map=tclp-vocabulary.json --output=ontology.ttl
 
 # Export SKOS taxonomies
 wp wptofile-graph skos_multiple --schema=schema.json --output=taxonomies.skos.ttl
+
+# Generate JSON-LD context (with @container and XSD types)
+wp wptofile-graph context --ontology=ontology.ttl --property-map=tclp-vocabulary.json --output=context.jsonld
 
 # Generate SHACL shapes
 wp wptofile-graph shapes --schema=schema.json --output=shapes.ttl
@@ -828,8 +878,8 @@ ddev exec "pip3 install --break-system-packages pyshacl"
 pip install pyshacl
 
 # Verify
-ddev wp wptofile-graph validate_check
-# or: wp wptofile-graph validate_check
+ddev wp wptofile-graph validate-check
+# or: wp wptofile-graph validate-check
 ```
 
 **Note:** The validator automatically checks common pip install locations including `~/.local/bin/pyshacl`.
