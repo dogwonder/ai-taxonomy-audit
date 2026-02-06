@@ -803,4 +803,4 @@ See [BENCHMARKING.md](BENCHMARKING.md) for strategies to track classification ac
 
 ## License
 
-GPL-2.0+
+GPL-3.0-or-later

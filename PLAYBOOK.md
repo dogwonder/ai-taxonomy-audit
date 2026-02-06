@@ -30,9 +30,14 @@ The complete knowledge graph maintenance pipeline:
 │  │ • Taxonomies     │    │ • VocabularyGen   │    │ • ontology.ttl   │      │
 │  │ • ACF Fields     │    │ • SKOSProcessor   │    │ • taxonomies.skos│      │
 │  │ • Relationships  │    │ • RDFProcessor    │    │ • context.jsonld │      │
-│  └──────────────────┘    │ • SHACLShapeGen   │    │ • content.ttl    │      │
-│                          │ • ContextGen      │    │ • shapes.ttl     │      │
-│                          └──────────────────┘    └──────────────────┘      │
+│  └──────────────────┘    │ • SHACLShapeGen   │    │ • shapes.ttl     │      │
+│                          │ • ContextGen      │    │ • content/*.ttl  │      │
+│  ┌──────────────────┐    │ • generateHead    │    │ • jsonld-head.php│      │
+│  │  Config (SSoT)   │───▶│                   │    │                  │      │
+│  ├──────────────────┤    └──────────────────┘    └──────────────────┘      │
+│  │ • tclp-vocab.json│                                                       │
+│  │ • export-profiles│                                                       │
+│  └──────────────────┘                                                       │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
@@ -64,6 +69,20 @@ The complete knowledge graph maintenance pipeline:
 │  └──────────────────┘    └──────────────────┘    └────────┬─────────┘      │
 └─────────────────────────────────────────────────────────────│───────────────┘
                                                               │
+                                                              ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        RAG / VECTOR EXPORT                                   │
+│                                                                              │
+│  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐      │
+│  │  wp-to-file-rag  │    │   JSONL Export    │    │   Vector Search  │      │
+│  │  (Chunking)      │───▶│   (Embeddings)   │───▶│   (Runtime)      │      │
+│  ├──────────────────┤    ├──────────────────┤    ├──────────────────┤      │
+│  │ • Content chunks │    │ • clauses.jsonl  │    │ • vectors.dat    │      │
+│  │ • SKOS enrichment│    │ • OpenAI embeds  │    │ • Cosine search  │      │
+│  │ • ACF extraction │    │ • Token estimates│    │ • MCP abilities  │      │
+│  └──────────────────┘    └──────────────────┘    └──────────────────┘      │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                                              │
                                               ┌───────────────┘
                                               ▼
                               ┌───────────────────────────────┐
@@ -76,18 +95,23 @@ The complete knowledge graph maintenance pipeline:
 
 | Phase | Tool | Input | Output | Human Touch |
 |-------|------|-------|--------|-------------|
-| **1. Discover** | `wp wptofile-graph discover` | WordPress | `schema.json` | Review structure |
-| **2. Vocabulary** | `wp wptofile-graph vocab` | schema.json | `ontology.ttl` | Review classes |
-| **3. Taxonomies** | `wp wptofile-graph skos_multiple` | schema.json | `taxonomies.skos.ttl` | Review hierarchy |
-| **4. Context** | `wp wptofile-graph context` | ontology.ttl | `context.jsonld` | — |
-| **5. Shapes** | `wp wptofile-graph shapes` | schema.json | `shapes.ttl` | Define constraints |
-| **6. Export** | `wp wptofile rdf` | WordPress | `content/*.ttl` | — |
+| **1. Discover** | `wp wptofile-graph discover` | WordPress | `vocab/schema.json` | Review structure |
+| **2. Vocabulary** | `wp wptofile-graph vocab` | schema.json + tclp-vocabulary.json | `vocab/ontology.ttl` | Review classes |
+| **3. Taxonomies** | `wp wptofile-graph skos_multiple` | schema.json | `vocab/taxonomies.skos.ttl` | Review hierarchy |
+| **4. Context** | `wp wptofile-graph context` | ontology.ttl + tclp-vocabulary.json | `vocab/context.jsonld` | — |
+| **5. Shapes** | `wp wptofile-graph shapes` | schema.json | `vocab/shapes.ttl` | Define constraints |
+| **5b. Frontend** *(optional)* | `wp wptofile-graph generateHead` | tclp-vocabulary.json + export-profiles.yaml | `mu-plugins/*.php` | — |
+| **6. Export** | `wp wptofile rdf` | WordPress | `export/rdf/*.ttl` | — |
 | **7. Validate** | `wp wptofile-graph validate` | content + shapes | Report | Fix violations |
 | **8. Classify** | `wp taxonomy-audit classify` | content + vocab | Suggestions | — |
 | **8b. Classify (SKOS)** | `wp taxonomy-audit classify --skos-context=...` | content + SKOS vocab | Hierarchical suggestions | — |
 | **9. Audit** | `wp taxonomy-audit classify --audit` | content + vocab | Gaps + new terms | Review suggestions |
 | **10. Apply** | `wp taxonomy-audit apply` | Approved CSV | WordPress updated | Approve changes |
-| **11. Loop** | → Back to Step 6 | — | — | — |
+| **11. RAG Export** | `wp wptofile-rag export` | WordPress + SKOS | `clauses.jsonl` | — |
+| **11b. Vectors** | `wp wptofile-rag prepare-vectors` | JSONL w/ embeddings | `vectors.dat` | — |
+| **12. Loop** | → Back to Step 6 | — | — | — |
+
+> **Note:** Steps 1-5 are "foundation" steps run once (or when schema changes). Steps 6-11 are the repeatable audit loop.
 
 ### The Continuous Improvement Loop
 
@@ -98,6 +122,7 @@ flowchart TB
         B --> C[Export SKOS Taxonomies]
         C --> C2[Generate JSON-LD Context]
         C2 --> D[Generate SHACL Shapes]
+        D --> D2[Generate Frontend JSON-LD]
     end
 
     subgraph "EXPORT CYCLE (Repeatable)"
@@ -119,11 +144,22 @@ flowchart TB
         K -->|No| P[Taxonomy Healthy]
     end
 
-    D --> E
+    subgraph "RAG EXPORT (After changes)"
+        R1[Export JSONL + SKOS enrichment]
+        R1 --> R2[Add embeddings]
+        R2 --> R3[Prepare vectors.dat]
+        R3 --> R4[Vector search ready]
+    end
+
+    D2 --> E
     H --> I
     O --> E
+    O --> R1
+    P --> R1
     P --> Q[Schedule Next Audit]
 ```
+
+> **Regenerate foundation** when: vocabulary config changes, new taxonomies added, or schema evolves.
 
 ---
 
@@ -140,6 +176,7 @@ flowchart TB
 |--------|----------|---------|
 | wp-to-file | `mu-plugins/wp-to-file` | Content export to JSON/RDF |
 | wp-to-file-graph | `plugins/wp-to-file-graph` | Schema discovery, SKOS, SHACL, ontologies |
+| wp-to-file-rag | `plugins/wp-to-file-rag` | JSONL chunking, embeddings, vector search |
 | ai-taxonomy-audit | `plugins/ai-taxonomy-audit` | AI-powered taxonomy classification |
 
 ### Check Plugin Status
@@ -150,6 +187,9 @@ wp taxonomy-audit status
 
 # Check wp-to-file-graph commands
 wp wptofile-graph --help
+
+# Check wp-to-file-rag commands
+wp wptofile-rag status
 
 # Check Ollama is running (for local LLM)
 curl http://localhost:11434/api/tags
@@ -729,6 +769,58 @@ chmod +x apply-taxonomies.sh
 
 ---
 
+### Phase 5b: RAG Export (Optional)
+
+After applying taxonomy changes, export content as JSONL for vector database ingestion. The SKOS file from Phase 2 enriches taxonomy metadata with broader/narrower hierarchy.
+
+#### 5b.1 Export to JSONL with SKOS Enrichment
+
+```bash
+# Basic JSONL export (uses ACF fields from export-profiles.yaml)
+wp wptofile-rag export --post_type=clause --output=wp-content/export/clauses.jsonl
+
+# With SKOS taxonomy enrichment
+wp wptofile-rag export \
+    --post_type=clause \
+    --skos-file=vocab/taxonomies.skos.ttl \
+    --output=wp-content/export/clauses.jsonl
+
+# Dry run to preview chunk counts
+wp wptofile-rag export --post_type=clause --dry-run
+```
+
+The export reads `post_type_configs` from `wp-to-file/config/export-profiles.yaml` (via `symfony/yaml`) to determine ACF field extraction, taxonomy filtering, and relationship fields.
+
+#### 5b.2 Add Embeddings
+
+```bash
+# Estimate costs first
+wp wptofile-rag cost_estimate --post_type=clause --model=text-embedding-3-small
+
+# Export with embeddings
+wp wptofile-rag export \
+    --post_type=clause \
+    --skos-file=vocab/taxonomies.skos.ttl \
+    --include_embeddings \
+    --output=wp-content/export/clauses-with-embeddings.jsonl
+```
+
+#### 5b.3 Prepare for Vector Search
+
+```bash
+# Convert JSONL to PHP-optimised vector format
+wp wptofile-rag prepare-vectors --input=wp-content/export/clauses-with-embeddings.jsonl
+
+# Test search
+wp wptofile-rag search "climate disclosure requirements" --limit=5
+```
+
+The resulting `vectors.dat` file powers the `dgwltd/find-similar` MCP ability for AI agent queries at runtime.
+
+See [wp-to-file-rag README](../wp-to-file-rag/README.md) for full CLI reference.
+
+---
+
 ### Phase 6: Export & Validate Content (Optional)
 
 After applying taxonomy changes, export enriched content and validate.
@@ -866,17 +958,47 @@ wp taxonomy-audit runs-compare <run-a> <run-b>
 
 ## Output Files
 
+### Vocabulary Files (`vocab/`)
+
+| File | Description | Generated By |
+|------|-------------|--------------|
+| `vocab/tclp-vocabulary.json` | **Single source of truth** — namespace, prefix, taxonomy mappings | Manual (config) |
+| `vocab/schema.json` | Content structure schema | `wp wptofile-graph discover` |
+| `vocab/ontology.ttl` | OWL vocabulary (classes, properties) | `wp wptofile-graph vocab` |
+| `vocab/taxonomies.skos.ttl` | SKOS concept schemes | `wp wptofile-graph skos_multiple` |
+| `vocab/context.jsonld` | JSON-LD @context for IRI expansion | `wp wptofile-graph context` |
+| `vocab/shapes.ttl` | SHACL validation shapes | `wp wptofile-graph shapes` |
+
+### Export Files (`wp-content/export/`)
+
+| File | Description | Generated By |
+|------|-------------|--------------|
+| `export/rdf/*.ttl` | Exported RDF content | `wp wptofile rdf` |
+| `export/rdf/changes.json` | Incremental export tracking | `wp wptofile rdf --incremental` |
+| `export/clause-jsonld/*.jsonld` | JSON-LD exports | `wp wptofile-graph jsonld` |
+
+### Frontend Integration (Optional)
+
+| File | Description | Generated By |
+|------|-------------|--------------|
+| `mu-plugins/tclp-jsonld-head.php` | Self-contained `wp_head` JSON-LD | `wp wptofile-graph generateHead` |
+
+### RAG / Vector Files (Optional)
+
+| File | Description | Generated By |
+|------|-------------|--------------|
+| `export/clauses.jsonl` | Chunked content with metadata | `wp wptofile-rag export` |
+| `export/clauses-with-embeddings.jsonl` | JSONL with embedding vectors | `wp wptofile-rag export --include_embeddings` |
+| `wp-to-file-rag/data/vectors.dat` | PHP-optimised vector search file | `wp wptofile-rag prepare-vectors` |
+
+### Audit Run Files (`output/runs/`)
+
 | File | Description |
 |------|-------------|
-| `vocab/schema.json` | Content structure schema |
-| `vocab/ontology.ttl` | OWL vocabulary (classes, properties) |
-| `vocab/taxonomies.skos.ttl` | SKOS concept schemes |
-| `vocab/shapes.ttl` | SHACL validation shapes |
 | `output/runs/<id>/manifest.json` | Run metadata and config |
 | `output/runs/<id>/suggestions.json` | AI taxonomy suggestions |
 | `output/runs/<id>/suggestions.csv` | CSV for human review |
 | `output/runs/<id>/gap-analysis.json` | Gap analysis results |
-| `export/rdf/*.ttl` | Exported RDF content |
 
 ---
 
@@ -939,11 +1061,78 @@ ddev wp wptofile-graph validate-check
 
 ---
 
+## The Linked Data Loop
+
+The complete semantic web integration forms a closed loop:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         LINKED DATA LOOP                                    │
+│                                                                             │
+│   ┌──────────────┐      ┌──────────────┐      ┌──────────────┐             │
+│   │  Taxonomies  │ ──▶  │  SKOS Vocab  │ ──▶  │  JSON-LD     │             │
+│   │  (WordPress) │      │  (Export)    │      │  (wp_head)   │             │
+│   └──────────────┘      └──────────────┘      └──────────────┘             │
+│          │                     │                     │                      │
+│          │                     │                     ▼                      │
+│          │                     │         ┌──────────────────────┐          │
+│          │                     │         │  Terms link to       │          │
+│          │                     │         │  resolvable IRIs:    │          │
+│          │                     │         │  /taxonomy/tax/term  │          │
+│          │                     │         └──────────────────────┘          │
+│          │                     │                     │                      │
+│          ▼                     ▼                     ▼                      │
+│   ┌──────────────────────────────────────────────────────────────┐         │
+│   │                    TAXONOMY ARCHIVES                          │         │
+│   │  Resolvable URLs serving as dereferenceable linked data      │         │
+│   │  /taxonomy/climate-or-nature-outcome/decarbonisation         │         │
+│   └──────────────────────────────────────────────────────────────┘         │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### The Four Components
+
+| Component | Purpose | Output |
+|-----------|---------|--------|
+| **1. Taxonomy Iteration** | AI-assisted term management | Refined WordPress taxonomies |
+| **2. SKOS Vocabulary Export** | Machine-readable vocab with term IRIs | `taxonomies.skos.ttl` |
+| **3. JSON-LD in `<head>`** | Structured data on every post | Terms as resolvable URLs |
+| **4. Taxonomy Archives** | Dereferenceable endpoints | Human + machine readable pages |
+
+### Why This Matters
+
+The loop is **RESTful and self-describing**:
+
+1. **Posts declare their terms** via JSON-LD in `<head>`
+2. **Term IRIs resolve** to taxonomy archive pages (`/taxonomy/tax-name/term-slug`)
+3. **Archives can serve RDF** (content negotiation) or HTML with embedded JSON-LD
+4. **Crawlers and agents** follow links, building a knowledge graph from your content
+
+This transforms WordPress from a document store into a **linked data endpoint**.
+
+### Taxonomy Archive URLs
+
+Configure permalinks to follow this structure:
+
+```
+taxonomy/taxonomy-name/term-name
+```
+
+**Examples:**
+- `example.com/taxonomy/climate-or-nature-outcome/decarbonisation`
+- `example.com/taxonomy/jurisdiction/united-kingdom`
+
+This provides a consistent, semantic URL pattern for all taxonomy term archives.
+
+---
+
 ## Related Documentation
 
 - `README.md` — Full command reference
 - `BENCHMARKING.md` — Measuring classification improvement over time
+- `wp-to-file-graph/README.md` — Graph export, SKOS, OWL, SHACL documentation
+- `wp-to-file-rag/README.md` — JSONL export, embeddings, vector search, SKOS enrichment
 - `wp-to-file-graph/PLAN.md` — Development plan with GoingMeta integration and future enhancements
-- `wp-to-file-graph/README.md` — Graph export documentation
 
 #ai #content #taxonomy #semantic-web

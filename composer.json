@@ -2,7 +2,7 @@
     "name": "dgwltd/ai-taxonomy-audit",
     "description": "WP-CLI tool for human-in-the-loop taxonomy enrichment using local LLM (Ollama)",
     "type": "wordpress-plugin",
-    "license": "GPL-2.0-or-later",
+    "license": "GPL-3.0-or-later",
     "authors": [
         {
             "name": "DGW Ltd",
