@@ -96,7 +96,7 @@ The complete knowledge graph maintenance pipeline:
 | Phase | Tool | Input | Output | Human Touch |
 |-------|------|-------|--------|-------------|
 | **1. Discover** | `wp wptofile-graph discover` | WordPress | `vocab/schema.json` | Review structure |
-| **1b. Vocab Init** *(new site)* | `wp wptofile-graph vocab_init` | schema.json | `config/tclp-vocabulary.json` | Customise mappings |
+| **1b. Vocab Init** *(new site)* | `wp wptofile-graph vocab_init` | schema.json | `vocab/tclp-vocabulary.json` | Customise mappings |
 | **2. Vocabulary** | `wp wptofile-graph vocab` | schema.json + tclp-vocabulary.json | `vocab/ontology.ttl` | Review classes |
 | **3. Taxonomies** | `wp wptofile-graph skos_multiple` | schema.json | `vocab/taxonomies.skos.ttl` | Review hierarchy |
 | **4. Context** | `wp wptofile-graph context` | ontology.ttl + tclp-vocabulary.json | `vocab/context.jsonld` | — |
@@ -196,7 +196,7 @@ wp wptofile-rag status
 curl http://localhost:11434/api/tags
 
 # Check SHACL validator availability (optional)
-wp wptofile-graph validate-check
+wp wptofile-graph validate_check
 ```
 
 ---
@@ -288,7 +288,7 @@ wp wptofile-graph vocab_init \
     --namespace=https://example.org/vocab/ \
     --prefix=vocab \
     --taxonomy-base-uri=https://example.org/taxonomy/ \
-    --output=config/tclp-vocabulary.json
+    --output=vocab/tclp-vocabulary.json
 ```
 
 Review the generated file: rename `property` values to match your RDF vocabulary, set `multi_valued: false` for single-select taxonomies, and add `extra_properties` for non-taxonomy fields.
@@ -811,7 +811,7 @@ The export reads `post_type_configs` from `wp-to-file/config/export-profiles.yam
 
 ```bash
 # Estimate costs first
-wp wptofile-rag cost_estimate --post_type=clause --model=text-embedding-3-small
+wp wptofile-rag cost-estimate --post_type=clause --model=text-embedding-3-small
 
 # Export with embeddings
 wp wptofile-rag export \
@@ -851,7 +851,7 @@ wp wptofile rdf --file_type=ttl --post_type=clause --output=export/rdf
 
 ```bash
 # Check validator is available
-wp wptofile-graph validate-check
+wp wptofile-graph validate_check
 
 # Validate exported RDF
 wp wptofile-graph validate wp-content/export/rdf/ --shapes=vocab/shapes.ttl
@@ -1044,18 +1044,17 @@ pyshacl is the recommended SHACL validator — lightweight and fully compliant.
 
 ```bash
 # For ddev environments (Debian-based containers)
-ddev exec "sudo apt-get update && sudo apt-get install -y python3-pip"
-ddev exec "pip3 install --break-system-packages pyshacl"
+ddev exec "curl -sS https://bootstrap.pypa.io/get-pip.py | python3 - --break-system-packages && python3 -m pip install --break-system-packages pyshacl"
 
 # For local/native environments
 pip install pyshacl
 
 # Verify
-ddev wp wptofile-graph validate-check
-# or: wp wptofile-graph validate-check
+ddev wp wptofile-graph validate_check
+# or: wp wptofile-graph validate_check
 ```
 
-**Note:** The validator automatically checks common pip install locations including `~/.local/bin/pyshacl`.
+**Note:** The `get-pip.py` bootstrap bypasses `apt-get`, avoiding GPG key issues with third-party repos. The `--break-system-packages` flag is required on Debian Bookworm (PEP 668) but safe in disposable DDEV containers. The validator automatically checks common pip install locations including `~/.local/bin/pyshacl`.
 
 ### Low Classification Confidence
 
