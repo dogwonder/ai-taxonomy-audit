@@ -96,6 +96,7 @@ The complete knowledge graph maintenance pipeline:
 | Phase | Tool | Input | Output | Human Touch |
 |-------|------|-------|--------|-------------|
 | **1. Discover** | `wp wptofile-graph discover` | WordPress | `vocab/schema.json` | Review structure |
+| **1b. Vocab Init** *(new site)* | `wp wptofile-graph vocab_init` | schema.json | `config/tclp-vocabulary.json` | Customise mappings |
 | **2. Vocabulary** | `wp wptofile-graph vocab` | schema.json + tclp-vocabulary.json | `vocab/ontology.ttl` | Review classes |
 | **3. Taxonomies** | `wp wptofile-graph skos_multiple` | schema.json | `vocab/taxonomies.skos.ttl` | Review hierarchy |
 | **4. Context** | `wp wptofile-graph context` | ontology.ttl + tclp-vocabulary.json | `vocab/context.jsonld` | — |
@@ -276,6 +277,21 @@ wp taxonomy-audit stats --post_type=clause --taxonomies=jurisdiction,climate-or-
 ### Phase 2: Generate Vocabularies (Optional but Recommended)
 
 Generate semantic web vocabularies for richer LLM context and validation.
+
+#### 2.0 Scaffold Vocabulary Config (New Sites Only)
+
+If `tclp-vocabulary.json` doesn't exist yet, scaffold it from the discovered schema:
+
+```bash
+wp wptofile-graph vocab_init \
+    --schema=vocab/schema.json \
+    --namespace=https://example.org/vocab/ \
+    --prefix=vocab \
+    --taxonomy-base-uri=https://example.org/taxonomy/ \
+    --output=config/tclp-vocabulary.json
+```
+
+Review the generated file: rename `property` values to match your RDF vocabulary, set `multi_valued: false` for single-select taxonomies, and add `extra_properties` for non-taxonomy fields.
 
 #### 2.1 Generate OWL Ontology
 
